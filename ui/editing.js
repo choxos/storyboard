@@ -7,6 +7,24 @@ export function moveElement(element, dx, dy) {
   }
 }
 
+export function alignmentDelta(bounds, width, height, alignment) {
+  const marginX = width * 0.05,
+    marginY = height * 0.05;
+  const horizontal = {
+    left: marginX - bounds.x,
+    right: width - marginX - bounds.x - bounds.width,
+    horizontal: (width - bounds.width) / 2 - bounds.x,
+    center: (width - bounds.width) / 2 - bounds.x,
+  };
+  const vertical = {
+    top: marginY - bounds.y,
+    bottom: height - marginY - bounds.y - bounds.height,
+    vertical: (height - bounds.height) / 2 - bounds.y,
+    center: (height - bounds.height) / 2 - bounds.y,
+  };
+  return [horizontal[alignment] || 0, vertical[alignment] || 0];
+}
+
 export const motionPresets = {
   "fade-in": "Fade in",
   "slide-up": "Slide up",

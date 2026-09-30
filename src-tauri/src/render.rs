@@ -140,11 +140,14 @@ pub fn raster(
     width: u32,
     height: u32,
     options: &resvg::usvg::Options,
+    transparent: bool,
 ) -> Result<resvg::tiny_skia::Pixmap, String> {
     let tree = resvg::usvg::Tree::from_str(svg, options).map_err(|e| e.to_string())?;
     let mut pixmap =
         resvg::tiny_skia::Pixmap::new(width, height).ok_or("Cannot allocate frame.")?;
-    pixmap.fill(resvg::tiny_skia::Color::WHITE);
+    if !transparent {
+        pixmap.fill(resvg::tiny_skia::Color::WHITE);
+    }
     let scale = resvg::tiny_skia::Transform::from_scale(
         width as f32 / tree.size().width(),
         height as f32 / tree.size().height(),
@@ -167,7 +170,7 @@ mod tests {
         let xml = svg(&p.scenes[0].scene, 1000.0, 1280, 720);
         assert!(!xml.contains("<script>"));
         assert!(xml.contains("&lt;script&gt;"));
-        let pixels = raster(&xml, 320, 180, &options()).unwrap();
+        let pixels = raster(&xml, 320, 180, &options(), true).unwrap();
         assert_eq!(pixels.data().len(), 320 * 180 * 4);
     }
 }

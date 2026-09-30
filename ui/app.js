@@ -1,5 +1,12 @@
 import { canvasSizes, resizeCanvas } from "./canvas.js";
-import { moveElement, motionPresets, applyMotionPreset } from "./editing.js";
+import {
+  moveElement,
+  motionPresets,
+  applyMotionPreset,
+  alignmentDelta,
+} from "./editing.js";
+import { sceneTemplates, createTemplate, createElement } from "./templates.js";
+import { audioGain } from "./audio-mix.js";
 
 const api = window.__TAURI__ || window.storyboardWeb;
 const browser = !!api?.browser;
@@ -131,8 +138,12 @@ function shell() {
   );
   $("#time-ms").addEventListener("change", (e) => seek(Number(e.target.value)));
   $("#canvas").addEventListener("dblclick", (e) => {
-    const id = e.target.closest("[data-element]")?.dataset.element;
-    openInspector(id);
+    const id = e.target.closest("[data-element]")?.dataset.element || s.layer;
+    if (
+      doc().scene.elements.find((element) => element.id === id)?.kind === "text"
+    )
+      editText(id);
+    else openInspector(id);
   });
   $("#canvas").addEventListener("pointerdown", beginDrag);
   $("#canvas").addEventListener("pointermove", dragLayer);
@@ -205,6 +216,8 @@ function status() {
     : "";
 }
 function transport() {
+  audio.volume = audioGain(s.project.audio, globalTime(), duration());
+  audio.muted = !!s.project.audio?.mix?.muted;
   $("#scene-meta").innerHTML =
     `<strong>Scene ${s.selected + 1} of ${s.project.scenes.length}</strong> · ${esc(doc().scene.name)}${s.mode === "scene" ? " · loops" : ""}`;
   const play = $('[data-action="play"]');
@@ -272,8 +285,8 @@ function layerTools() {
   $("#canvas-tools").innerHTML =
     `<label>Layer<select id="canvas-layer" aria-label="Select canvas layer"><option value="">Select a layer</option>${doc()
       .scene.elements.map(
-        (e) =>
-          `<option value="${esc(e.id)}" ${s.layer === e.id ? "selected" : ""}>${esc(e.text.slice(0, 30) || e.id)}</option>`,
+        (e, i) =>
+          `<option value="${esc(e.id)}" ${s.layer === e.id ? "selected" : ""}>${esc(e.text.slice(0, 30) || `${e.kind} ${i + 1}`)}</option>`,
       )
       .join(
         "",
@@ -283,6 +296,86 @@ function layerTools() {
     selectLayer($("#canvas-layer").value || null);
     $("#canvas").focus({ preventScroll: true });
   };
+  const element = selectedElement();
+  if (element) {
+    $('[data-action="edit-selected"]').insertAdjacentHTML(
+      "beforebegin",
+      `${element.kind === "text" ? '<button data-action="edit-text">Edit text</button>' : ""}<select id="align-layer" aria-label="Align selected layer"><option value="">Align to canvas</option><option value="horizontal">Center horizontally</option><option value="vertical">Center vertically</option><option value="center">Center both</option><option value="left">Left margin</option><option value="right">Right margin</option><option value="top">Top margin</option><option value="bottom">Bottom margin</option></select>`,
+    );
+    $("#align-layer").disabled = s.busy;
+    $("#align-layer").onchange = (event) =>
+      alignSelected(event.target.value).catch((error) => toast(error, true));
+  }
+}
+async function alignSelected(alignment) {
+  if (!alignment || s.busy || s.editing || s.drag) return;
+  pause();
+  await requestFrame();
+  const node = [...$("#canvas").querySelectorAll("[data-element]")].find(
+    (e) => e.dataset.element === s.layer,
+  );
+  if (!node) return;
+  const bounds = node.getBoundingClientRect(),
+    inverse = $("#canvas > svg").getScreenCTM().inverse();
+  const start = new DOMPoint(bounds.left, bounds.top).matrixTransform(inverse),
+    end = new DOMPoint(bounds.right, bounds.bottom).matrixTransform(inverse);
+  const [dx, dy] = alignmentDelta(
+    {
+      x: start.x,
+      y: start.y,
+      width: end.x - start.x,
+      height: end.y - start.y,
+    },
+    s.project.width,
+    s.project.height,
+    alignment,
+  );
+  await moveSelected(dx, dy);
+  $("#canvas").focus({ preventScroll: true });
+}
+
+function editText(id = s.layer) {
+  if (s.busy || s.editing) return;
+  const element = doc().scene.elements.find((e) => e.id === id);
+  if (element?.kind !== "text") return;
+  selectLayer(id);
+  let fill = element.fill;
+  const d = modal(
+    "Edit text",
+    `<label>Words<textarea id="quick-text" rows="4" maxlength="10000">${esc(element.text)}</textarea></label><div class="form-row three"><label>Font size<input id="quick-size" type="number" min="1" max="1000" value="${element.font_size}" step="any"></label><label>Weight<select id="quick-weight">${[100, 200, 300, 400, 500, 600, 700, 800, 900].map((weight) => `<option value="${weight}" ${weight === element.font_weight ? "selected" : ""}>${weight === 400 ? "Regular" : weight === 700 ? "Bold" : weight}</option>`).join("")}</select></label><label>Text color<input id="quick-color" type="color" value="${fill === "none" ? "#18181b" : fill}"></label></div><p>Line breaks create new lines. Position and animation stay as you designed them.</p>`,
+    '<button id="apply-text" class="primary">Apply text</button>',
+  );
+  $("#quick-color").oninput = (event) => {
+    fill = event.target.value;
+  };
+  if (element.font_weight % 100) {
+    $("#quick-weight").add(
+      new Option(
+        String(element.font_weight),
+        String(element.font_weight),
+        true,
+        true,
+      ),
+    );
+  }
+  $("#apply-text").onclick = async () => {
+    if (!$("#quick-size").reportValidity()) return;
+    const text = $("#quick-text").value,
+      size = Number($("#quick-size").value),
+      weight = Number($("#quick-weight").value);
+    if (
+      await commit(() => {
+        revision(doc(), "Before editing text");
+        Object.assign(
+          doc().scene.elements.find((e) => e.id === id),
+          { text, font_size: size, font_weight: weight, fill },
+        );
+      })
+    )
+      d.close();
+  };
+  $("#quick-text").focus();
+  $("#quick-text").select();
 }
 function selectLayer(id) {
   pause();
@@ -518,6 +611,10 @@ function audioLane() {
     return;
   }
   lane.innerHTML = `<div class="audio-header">${icon("music")}<span class="audio-name">${esc(a.name)}</span><span>${a.bpm.toFixed(1)} BPM</span><button data-action="audio-grid">Beat grid</button><label class="check"><input id="snap" type="checkbox" ${s.snap ? "checked" : ""}>Snap</label><button data-action="snap-cuts">Snap cuts</button><button data-action="snap-motion">Snap motion</button><span class="spacer"></span><button class="quiet" data-action="import" aria-label="Replace soundtrack">Replace</button><button class="quiet" data-action="remove-audio" aria-label="Remove soundtrack">${icon("close")}</button></div><svg class="waveform" id="waveform" viewBox="0 0 1000 42" preserveAspectRatio="none" role="img" aria-label="Audio waveform with estimated beat markers"></svg>`;
+  $('[data-action="audio-grid"]').insertAdjacentHTML(
+    "beforebegin",
+    `<button data-action="audio-mix">Volume ${Math.round((a.mix?.volume ?? 1) * 100)}%</button><button data-action="mute-audio" aria-pressed="${!!a.mix?.muted}">${a.mix?.muted ? "Unmute" : "Mute"}</button>`,
+  );
   let wave = "";
   const total = duration();
   for (let x = 0; x < 1000; x += 2) {
@@ -736,36 +833,14 @@ function history(redo = false) {
   persist();
   refresh();
 }
-function blankScene() {
+function blankScene(width = s.project.width, height = s.project.height) {
   return {
     scene: {
       id: uid(),
       name: "Untitled scene",
       duration_ms: 3000,
       background: "#fafafa",
-      elements: [
-        {
-          id: uid(),
-          kind: "text",
-          text: "Your next idea.",
-          path: "",
-          x: s.project.width / 2,
-          y: s.project.height / 2,
-          width: 0,
-          height: 0,
-          fill: "#18181b",
-          stroke: "none",
-          stroke_width: 1,
-          font_size: 64,
-          font_weight: 700,
-          radius: 0,
-          opacity: 1,
-          rotation: 0,
-          scale_x: 1,
-          scale_y: 1,
-          tracks: [],
-        },
-      ],
+      elements: [createElement(width, height)],
     },
     revisions: [],
     chat: [],
@@ -943,25 +1018,165 @@ async function open(path = null) {
 }
 async function newProject() {
   if (s.busy || !(await mayReplace())) return;
-  pause();
-  s.project = {
-    ...s.project,
-    name: "Untitled project",
-    scenes: [blankScene()],
-    audio: null,
-    chat: [],
+  openTemplates(true);
+}
+
+function canvasSizeOptions() {
+  return (
+    '<option value="">Custom dimensions</option>' +
+    Object.entries(canvasSizes)
+      .map(
+        ([group, sizes]) =>
+          `<optgroup label="${esc(group)}">${sizes.map(([name, w, h]) => `<option value="${w}x${h}">${esc(name)} · ${w} × ${h}</option>`).join("")}</optgroup>`,
+      )
+      .join("")
+  );
+}
+
+function openTemplates(newProject = false) {
+  if (s.busy || s.editing) return;
+  let selected = "title",
+    request = 0;
+  const choices = {
+    ...sceneTemplates,
+    blank: {
+      name: "Blank scene",
+      description: "Start with one text layer and no animation.",
+    },
   };
-  s.path = null;
-  s.selected = 0;
-  s.time = 0;
-  s.dirty = true;
-  s.undo = [];
-  s.redo = [];
-  s.revision++;
-  setAudio();
-  persist();
-  refresh();
-  openProjectSettings();
+  const d = modal(
+    newProject ? "Start a new project" : "Add a scene",
+    `${newProject ? `<label>Project name<input id="starter-name" value="Untitled project" maxlength="200"></label><label>Canvas size<select id="starter-size">${canvasSizeOptions()}</select></label><div class="form-row"><label>Width (px)<input id="starter-width" type="number" min="64" max="8192" step="2" value="${s.project.width}"></label><label>Height (px)<input id="starter-height" type="number" min="64" max="8192" step="2" value="${s.project.height}"></label></div>` : `<p>Adds after the current scene at ${s.project.width} × ${s.project.height}. Existing scenes stay intact.</p>`}<div class="starter-heading"><p>Pick a starting layout. Every word, shape, and animation is editable.</p><label>Accent<input id="starter-accent" type="color" value="#4776f5"></label></div><div class="template-grid">${Object.entries(
+      choices,
+    )
+      .map(
+        ([id, choice]) =>
+          `<button class="template-card" data-template="${id}" aria-pressed="${id === selected}"><span class="template-thumb" id="template-${id}"></span><strong>${esc(choice.name)}</strong><small>${esc(choice.description)}</small></button>`,
+      )
+      .join("")}</div><p id="starter-status" role="status"></p>`,
+    `<button id="create-starter" class="primary">${newProject ? "Create project" : "Add scene"}</button>`,
+    true,
+  );
+  const grid = d.querySelector(".template-grid");
+  const dimensions = () =>
+    newProject
+      ? [Number($("#starter-width").value), Number($("#starter-height").value)]
+      : [s.project.width, s.project.height];
+  const make = (id, width, height) =>
+    id === "blank"
+      ? blankScene(width, height)
+      : createTemplate(id, width, height, $("#starter-accent").value);
+  const preview = async () => {
+    const ticket = ++request;
+    const [width, height] = dimensions();
+    const valid =
+      Number.isInteger(width) &&
+      Number.isInteger(height) &&
+      width >= 64 &&
+      height >= 64 &&
+      width <= 8192 &&
+      height <= 8192 &&
+      width % 2 === 0 &&
+      height % 2 === 0 &&
+      width * height <= 8192 * 4320;
+    $("#create-starter").disabled = !valid;
+    $("#starter-status").textContent = valid
+      ? `${choices[selected].name} · ${selected === "blank" ? "3" : "4"} seconds`
+      : "Use even canvas dimensions from 64 to 8192 px, up to 35.4 megapixels.";
+    if (!valid) return;
+    try {
+      const frames = await Promise.all(
+        Object.keys(choices).map(async (id) => [
+          id,
+          await invoke("render_frame", {
+            scene: make(id, width, height).scene,
+            timeMs: 1200,
+            width,
+            height,
+          }),
+        ]),
+      );
+      if (ticket !== request || !grid.isConnected || !d.open) return;
+      for (const [id, svg] of frames) $(`#template-${id}`).innerHTML = svg;
+    } catch (error) {
+      if (ticket === request && grid.isConnected)
+        $("#starter-status").textContent = String(error);
+    }
+  };
+  d.querySelectorAll("[data-template]").forEach((button) => {
+    button.onclick = () => {
+      selected = button.dataset.template;
+      d.querySelectorAll("[data-template]").forEach((b) =>
+        b.setAttribute("aria-pressed", String(b === button)),
+      );
+      const [width, height] = dimensions();
+      $("#starter-status").textContent =
+        `${choices[selected].name} · ${selected === "blank" ? "3" : "4"} seconds · ${width} × ${height}`;
+    };
+  });
+  $("#starter-accent").oninput = preview;
+  if (newProject) {
+    const match = () => {
+      $("#starter-size").value =
+        `${$("#starter-width").value}x${$("#starter-height").value}`;
+      preview();
+    };
+    $("#starter-width").oninput = match;
+    $("#starter-height").oninput = match;
+    $("#starter-size").value = `${s.project.width}x${s.project.height}`;
+    $("#starter-size").onchange = () => {
+      const value = $("#starter-size").value;
+      if (value) {
+        const [width, height] = value.split("x");
+        $("#starter-width").value = width;
+        $("#starter-height").value = height;
+        preview();
+      } else $("#starter-width").focus();
+    };
+  }
+  $("#create-starter").onclick = async () => {
+    const [width, height] = dimensions();
+    const document = make(selected, width, height);
+    if (newProject) {
+      const project = {
+        ...s.project,
+        name: $("#starter-name").value || "Untitled project",
+        width,
+        height,
+        scenes: [document],
+        audio: null,
+        chat: [],
+      };
+      try {
+        await invoke("validate_project", { project });
+      } catch (error) {
+        toast(error, true);
+        return;
+      }
+      s.project = project;
+      s.path = null;
+      s.selected = 0;
+      s.time = Math.min(1200, document.scene.duration_ms);
+      s.dirty = true;
+      s.undo = [];
+      s.redo = [];
+      s.snap = false;
+      s.layer = null;
+      s.revision++;
+      setAudio();
+      persist();
+      refresh();
+      d.close();
+    } else if (
+      await commit(() => {
+        s.project.scenes.splice(s.selected + 1, 0, document);
+        s.selected++;
+        s.time = s.mode === "scene" ? 1200 : sceneStart() + 1200;
+      })
+    )
+      d.close();
+  };
+  preview();
 }
 async function importAudio(path = null) {
   if (s.busy) return;
@@ -1088,16 +1303,7 @@ function openProjectSettings(focusCanvas = false) {
   const p = s.project;
   const d = modal(
     "Project & canvas",
-    `<label>Project name<input id="project-name-input" value="${esc(p.name)}" maxlength="200"></label><label>Canvas size<select id="canvas-size"><option value="">Custom dimensions</option>${Object.entries(
-      canvasSizes,
-    )
-      .map(
-        ([group, sizes]) =>
-          `<optgroup label="${esc(group)}">${sizes.map(([name, w, h]) => `<option value="${w}x${h}">${esc(name)} · ${w} × ${h}</option>`).join("")}</optgroup>`,
-      )
-      .join(
-        "",
-      )}</select></label><div class="form-row three"><label>Width (px)<input type="number" id="canvas-width" value="${p.width}" min="64" max="8192" step="2"></label><label>Height (px)<input type="number" id="canvas-height" value="${p.height}" min="64" max="8192" step="2"></label><label>Frame rate<select id="project-fps">${[24, 30, 60].map((n) => `<option ${n === p.fps ? "selected" : ""}>${n}</option>`).join("")}</select></label></div><p>47 common formats, with square pixels. Custom sizes use even dimensions from 64 to 8192 px, up to 35.4 megapixels. Large canvases take longer to export.</p><p>Canvas changes scale existing layers, animation coordinates, and saved revisions to fit. Audio stays on the same timeline.</p><label>Art direction<textarea id="art-direction" rows="3" maxlength="20000">${esc(p.art_direction)}</textarea></label>`,
+    `<label>Project name<input id="project-name-input" value="${esc(p.name)}" maxlength="200"></label><label>Canvas size<select id="canvas-size">${canvasSizeOptions()}</select></label><div class="form-row three"><label>Width (px)<input type="number" id="canvas-width" value="${p.width}" min="64" max="8192" step="2"></label><label>Height (px)<input type="number" id="canvas-height" value="${p.height}" min="64" max="8192" step="2"></label><label>Frame rate<select id="project-fps">${[24, 30, 60].map((n) => `<option ${n === p.fps ? "selected" : ""}>${n}</option>`).join("")}</select></label></div><p>47 common formats, with square pixels. Custom sizes use even dimensions from 64 to 8192 px, up to 35.4 megapixels. Large canvases take longer to export.</p><p>Canvas changes scale existing layers, animation coordinates, and saved revisions to fit. Audio stays on the same timeline.</p><label>Art direction<textarea id="art-direction" rows="3" maxlength="20000">${esc(p.art_direction)}</textarea></label>`,
     `<button id="load-example">Load example</button><span class="spacer"></span><button id="save-settings" class="primary">Apply</button>`,
   );
   const matchSize = () => {
@@ -1221,6 +1427,50 @@ function audioGrid() {
   };
 }
 
+function soundMix() {
+  const track = s.project.audio;
+  if (!track || s.busy) return;
+  const mix = {
+    volume: 1,
+    muted: false,
+    fade_in_ms: 0,
+    fade_out_ms: 0,
+    ...track.mix,
+  };
+  const end = Math.min(track.duration_ms, duration());
+  const d = modal(
+    "Soundtrack volume & fades",
+    `<p>${esc(track.name)}. These settings apply to playback and exported video.</p><label>Volume <output id="mix-volume-value">${Math.round(mix.volume * 100)}%</output><input id="mix-volume" type="range" min="0" max="100" step="1" value="${Math.round(mix.volume * 100)}"></label><label class="check"><input id="mix-muted" type="checkbox" ${mix.muted ? "checked" : ""}>Mute soundtrack</label><div class="form-row"><label>Fade in (seconds)<input id="mix-in" type="number" min="0" max="600" step="0.1" value="${mix.fade_in_ms / 1000}"></label><label>Fade out (seconds)<input id="mix-out" type="number" min="0" max="600" step="0.1" value="${mix.fade_out_ms / 1000}"></label></div><p>Fade in starts with the video. Fade out finishes when the video or soundtrack ends, whichever comes first (${seconds(end)} here). Long fades shorten to fit; overlapping fades combine.</p>`,
+    '<button id="reset-mix">Reset mix</button><span class="spacer"></span><button id="apply-mix" class="primary">Apply mix</button>',
+  );
+  const volumeLabel = () => {
+    $("#mix-volume-value").textContent = `${$("#mix-volume").value}%`;
+  };
+  $("#mix-volume").oninput = volumeLabel;
+  $("#reset-mix").onclick = () => {
+    $("#mix-volume").value = 100;
+    $("#mix-muted").checked = false;
+    $("#mix-in").value = $("#mix-out").value = 0;
+    volumeLabel();
+  };
+  $("#apply-mix").onclick = async () => {
+    if (!$("#mix-in").reportValidity() || !$("#mix-out").reportValidity())
+      return;
+    const value = {
+      volume: Number($("#mix-volume").value) / 100,
+      muted: $("#mix-muted").checked,
+      fade_in_ms: Math.round(Number($("#mix-in").value) * 1000),
+      fade_out_ms: Math.round(Number($("#mix-out").value) * 1000),
+    };
+    if (
+      await commit(() => {
+        s.project.audio.mix = value;
+      })
+    )
+      d.close();
+  };
+}
+
 function snapCuts() {
   if (!s.project.audio) return;
   commit(() => {
@@ -1325,11 +1575,12 @@ function click(e) {
     undo: () => history(),
     redo: () => history(true),
     "edit-selected": () => openInspector(s.layer),
+    "edit-text": () => editText(),
     "clear-selection": () => selectLayer(null),
     shortcuts: () =>
       modal(
         "Keyboard shortcuts",
-        `<dl class="shortcut-list"><dt>Space</dt><dd>Play or pause</dd><dt>Left / Right</dt><dd>Step one frame when no layer is selected</dd><dt>Arrow keys</dt><dd>Move selected layer by 1 pixel</dd><dt>Shift + Arrow keys</dt><dd>Move selected layer by 10 pixels</dd><dt>Shift + Drag</dt><dd>Move along one axis</dd><dt>Escape</dt><dd>Cancel a drag, deselect, or exit presentation</dd><dt>Command / Ctrl + Z</dt><dd>Undo</dd><dt>Command / Ctrl + Shift + Z</dt><dd>Redo</dd><dt>Command / Ctrl + S</dt><dd>Save project</dd><dt>Command / Ctrl + O</dt><dd>Open project</dd><dt>Command / Ctrl + Enter</dt><dd>${browser ? "Prepare assistant prompt" : "Send prompt"}</dd><dt>Option / Alt + Left / Right</dt><dd>Reorder selected scene</dd></dl><p>Dragging and nudging shift the layer's entire position animation. Double-click a layer to edit its keyframes. Use the Layer selector to reach overlapping or transparent layers.</p>`,
+        `<dl class="shortcut-list"><dt>Space</dt><dd>Play or pause</dd><dt>Left / Right</dt><dd>Step one frame when no layer is selected</dd><dt>Arrow keys</dt><dd>Move selected layer by 1 pixel</dd><dt>Shift + Arrow keys</dt><dd>Move selected layer by 10 pixels</dd><dt>Shift + Drag</dt><dd>Move along one axis</dd><dt>Escape</dt><dd>Cancel a drag, deselect, or exit presentation</dd><dt>Command / Ctrl + Z</dt><dd>Undo</dd><dt>Command / Ctrl + Shift + Z</dt><dd>Redo</dd><dt>Command / Ctrl + S</dt><dd>Save project</dd><dt>Command / Ctrl + O</dt><dd>Open project</dd><dt>Command / Ctrl + Enter</dt><dd>${browser ? "Prepare assistant prompt" : "Send prompt"}</dd><dt>Option / Alt + Left / Right</dt><dd>Reorder selected scene</dd></dl><p>Dragging, nudging, and alignment shift the layer's entire position animation. Double-click text to edit its words; use Edit layer for keyframes. Align uses the visible layer bounds at the playhead, with 5% canvas margins. Use the Layer selector to reach overlapping or transparent layers.</p>`,
       ),
     versions,
     "project-settings": openProjectSettings,
@@ -1342,14 +1593,22 @@ function click(e) {
     "export-svg": () => exportStill("svg"),
     seams: checkSeams,
     "audio-grid": audioGrid,
+    "audio-mix": soundMix,
+    "mute-audio": () =>
+      commit(() => {
+        const track = s.project.audio;
+        if (track)
+          track.mix = {
+            volume: 1,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+            ...track.mix,
+            muted: !track.mix?.muted,
+          };
+      }),
     "snap-cuts": snapCuts,
     "snap-motion": snapMotion,
-    add: () =>
-      commit(() => {
-        s.project.scenes.splice(s.selected + 1, 0, blankScene());
-        s.selected++;
-        s.time = 0;
-      }),
+    add: () => openTemplates(),
     duplicate: () =>
       commit(() => {
         const copy = clone(doc());

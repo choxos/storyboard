@@ -20,10 +20,10 @@ Inspired by [Caleb Porzio's editor](https://x.com/calebporzio/status/21049454780
 
 ## Browser workflow
 
-1. Open the example, add scenes, or open a `.storyboard` file from the desktop app.
-2. Click and drag layers directly on the canvas. Use **Layers & timing** for text, shapes, stacking order, motion presets, and exact animation. **Canvas** offers 47 common formats and custom dimensions.
+1. Choose **New project**, pick a canvas and an editable scene template, or open a `.storyboard` file from the desktop app. **Add scene** offers the same layouts without replacing your project.
+2. Double-click text to change its words, size, weight, and color. Drag layers or use **Align to canvas** to place them. Use **Layers & timing** for shapes, stacking order, motion presets, and exact animation. **Canvas** offers 47 common formats and custom dimensions.
 3. For AI edits, choose Claude or Codex, describe the change, and click **Prepare prompt**. Copy the prepared context into your assistant, choose model and effort there, then paste its JSON response back into Storyboard. Invalid responses are rejected before application. Applied edits create a revision and can be undone.
-4. Add a local soundtrack. Review estimated tempo and downbeats in **Beat grid** before snapping cuts or motion.
+4. Add a local soundtrack. Set its **Volume**, mute, and fades, then review estimated tempo and downbeats in **Beat grid** before snapping cuts or motion.
 5. **Save** downloads an editable project. **Render** records video with progress and cancellation, or saves the current frame as PNG or SVG. Keep the tab visible while recording video.
 
 GitHub Pages cannot launch desktop CLIs. Direct AI calls and live CLI catalogs belong to the macOS app. The browser edition deliberately asks for no API keys.
@@ -81,10 +81,13 @@ The bundle is built for the current Mac architecture. It is locally signed, not 
 
 ## Shared editing tools
 
+- **Scene templates:** opening title, announcement, quote, big number, three steps, and call to action, plus a blank scene. Pick an accent color and preview each layout. Templates adapt to landscape, square, and portrait canvases, use editable vector layers, and include starter motion. Canceling leaves the current project intact; adding a scene can be undone.
+- **Quick text editing:** double-click visible text or select a text layer and choose **Edit text**. Change words, line breaks, font size, weight, and color while keeping position and animation. Changes create a saved revision and one undo step.
 - **Scene / Project:** prompt one scene or revise the entire storyboard. Browser users exchange JSON through **Prepare prompt**. In the macOS app, pick Claude or Codex beside Send, then choose a live model or **CLI default**.
 - **Thinking effort (macOS):** choose an explicit model to see effort levels reported by its CLI. Choices are remembered per provider and model. **CLI default** leaves effort unchanged. Higher effort can take longer and use more quota; models without effort support keep their default behavior.
-- **Layers & timing:** edit text, shapes, colors, geometry, and keyframe times, values, and easing. Double-click a visible layer to open its inspector. Duration edits proportionally retime existing keyframes.
+- **Layers & timing:** edit text, shapes, colors, geometry, and keyframe times, values, and easing. **Edit layer** opens the selected layer's inspector; double-clicking a shape also opens it. Duration edits proportionally retime existing keyframes.
 - **Canvas editing:** click a layer to select it, then drag it to move. Arrow keys nudge by 1 pixel; Shift+Arrow nudges by 10. Shift constrains a drag to one axis. Escape cancels a drag or deselects. Moves shift the entire position animation and create one undo step per drag. The **Layer** selector reaches overlapping and transparent layers.
+- **Alignment:** center a selected layer horizontally, vertically, or both, or align to a 5% left, right, top, or bottom canvas margin. Alignment uses its visible bounds at the current playhead, including transforms and multiline text, and moves the entire position animation together.
 - **Layer order:** duplicate the selected layer with its motion and a 24-pixel offset. **Send backward** and **Bring forward** change stacking order. Later layers draw in front.
 - **Motion presets:** **Fade in**, **Slide up**, **Pop in**, and **Fade out** create up to 600 ms of motion. They replace only affected tracks, preserve other animation, and use the layer's base position, scale, and opacity. Fade out ends at the scene boundary. Short scenes use their full duration.
 - **Versions / Undo / Redo:** restore previous scene revisions or undo and redo project changes. Up to 50 saved revisions and 100 chat messages per scene. Project undo holds 30 changes for the current session. **Keyboard shortcuts** in the status bar lists playback, editing, and file controls.
@@ -104,6 +107,8 @@ There is no bundled list of model names or fallback catalog. Availability comes 
 ## Sound and rhythm
 
 Drop a local audio file into the window or choose **Add a soundtrack**. WAV, MP3, M4A, AAC, AIFF, and FLAC are supported by the importer; playback depends on macOS WebKit's codec support.
+
+**Volume** opens soundtrack level (0–100%), mute, fade in, and fade out controls. Preview and video export use the same linear fade rules. Fade in starts at the beginning of the video; fade out ends at the earlier of the soundtrack or video end. Long fades shorten to fit, and overlapping fades multiply. **Reset mix** resets the dialog; **Apply mix** saves it. Mix changes support undo, recovery, and project saves. Older projects open at full volume with no fades.
 
 Both engines analyze an onset envelope to estimate tempo and downbeat phase. Strong changes in bar energy suggest section boundaries. These are editable heuristics, not guaranteed musical transcription. Silence and weak rhythms produce low confidence. Use **Beat grid** to correct BPM, beats per bar, downbeat offset, and section markers.
 
@@ -126,6 +131,10 @@ Scene data and AI responses are validated before application. They cannot insert
 This version is a vector motion editor. It does not execute arbitrary generated web apps, import video or image layers, or offer 3D compositing. Limits: 100 scenes, 250 elements per scene, 10-minute projects and audio, 2-minute individual scenes, and 20 MB project files. Canvas dimensions must be even, 64–8192 pixels per side, with at most 35,389,440 pixels total (8192 × 4320, or its portrait equivalent). Frame rates: 24, 30, 60. Large canvases increase rendering time and memory use. Presets use square pixels and are not an exhaustive catalog of every platform's changing requirements.
 
 ## Verify
+
+Creator workflow checks on September 30, 2026: ten web tests and eleven Rust tests passed, along with strict TypeScript compilation and Clippy with warnings denied. Browser checks exercised all six templates plus blank, portrait sizing, custom accent, multiline text without changing motion, all seven alignment actions at an animated frame, and undo/cancel. Native UI checks covered template creation and cancellation, physical double-click text editing, centering, soundtrack import, volume/fade settings, mute, and playback. Desktop and 390 × 844 browser layouts were inspected.
+
+Decoded browser exports measured a 0.2499 level ratio for a 25% mix, attenuation during both fades, and zero signal when muted. Audio export now follows the audio clock to avoid truncation under load. A native export from the UI's recovered project measured a 0.4994 ratio for a 50% mix, both fades, and silence after the two-second soundtrack ended. Rust integration checks also cover older projects without mix settings and decoded PNG alpha. The macOS release bundle passed strict code-signature verification. Browser video remains real-time recording; codec delay and packet boundaries can shift audible fade endpoints by tens of milliseconds. Use the native export when exact timing matters.
 
 Shared editing checks on September 30, 2026: seven web tests and ten Rust tests passed, together with strict TypeScript compilation and Clippy with warnings denied. Browser interaction checks covered direct selection, nudging, drag commit and cancellation, axis locking, duplication, stacking order, visible undo/redo, and all four presets at their start and end times. PNG and SVG downloads matched the 1280 × 720 canvas and requested frame time without selection overlays. Desktop checks exercised physical dragging, keyframe-preserving movement, duplication, reordering, presets, and native PNG/SVG save dialogs. Responsive checks used 1440 × 960 and 390 × 844 viewports.
 

@@ -27,9 +27,15 @@ fn cli(args: &[String]) -> Result<(), String> {
             }
             let (scene, local) = p.scene_at(time);
             let svg = storyboard::render::svg(scene, local, p.width, p.height);
-            storyboard::render::raster(&svg, p.width, p.height, &storyboard::render::options())?
-                .save_png(&args[4])
-                .map_err(|e| e.to_string())?;
+            storyboard::render::raster(
+                &svg,
+                p.width,
+                p.height,
+                &storyboard::render::options(),
+                true,
+            )?
+            .save_png(&args[4])
+            .map_err(|e| e.to_string())?;
         }
         Some("--export") if args.len() == 4 => {
             let p = storyboard::storage::read(Path::new(&args[2]))?;

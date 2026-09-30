@@ -701,6 +701,7 @@ label {
 }
 .audio-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   font-size: 10px;
@@ -875,6 +876,63 @@ dialog::backdrop {
 }
 .wide {
   width: 850px;
+}
+.starter-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.starter-heading label {
+  flex-shrink: 0;
+}
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 15px;
+}
+.template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  text-align: left;
+  white-space: normal;
+  padding: 8px;
+  min-width: 0;
+}
+.template-card[aria-pressed="true"] {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px #4776f533;
+}
+.template-card small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.template-thumb {
+  display: block;
+  height: 104px;
+  background: #f4f4f6;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.template-thumb svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+#align-layer {
+  max-width: 160px;
+}
+@media (max-width: 650px) {
+  .template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .template-thumb {
+    height: 86px;
+  }
 }
 .inspector {
   display: grid;

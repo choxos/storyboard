@@ -91,10 +91,104 @@ fn still_exports_match_canvas_and_preserve_files_on_invalid_input() {
     assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 240);
     assert!(export::frame(scene, f64::NAN, 320, 240, "png", &path).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let mut transparent = scene.clone();
+    transparent.background = "none".into();
+    transparent.elements.clear();
+    export::frame(&transparent, 1200.0, 320, 240, "png", &path).unwrap();
+    let decoded = Command::new(process::program("ffmpeg").unwrap())
+        .args(["-v", "error", "-i"])
+        .arg(&path)
+        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
+        .output()
+        .unwrap();
+    assert!(decoded.status.success());
+    assert_eq!(decoded.stdout.len(), 320 * 240 * 4);
+    assert!(
+        decoded
+            .stdout
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 0)
+    );
     let svg = dir.path().join("frame.svg");
     export::frame(scene, 1200.0, 320, 240, "svg", &svg).unwrap();
     assert_eq!(
         std::fs::read_to_string(svg).unwrap(),
         storyboard::render::svg(scene, 1200.0, 320, 240)
     );
+}
+
+#[test]
+fn sound_mix_changes_encoded_audio_and_reads_older_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("tone.wav");
+    let ffmpeg = process::program("ffmpeg").unwrap();
+    let status = Command::new(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=22050:duration=2",
+        ])
+        .arg(&wav)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let cancel = AtomicBool::new(false);
+    let mut project = model::demo_project();
+    project.width = 160;
+    project.height = 90;
+    project.scenes.truncate(1);
+    project.scenes[0].scene.duration_ms = 2000;
+    project.scenes[0].scene.elements.clear();
+    project.audio = Some(audio::analyze(&wav, &cancel).unwrap());
+    let mut old = serde_json::to_value(&project).unwrap();
+    old["audio"].as_object_mut().unwrap().remove("mix");
+    let restored: model::Project = serde_json::from_value(old).unwrap();
+    assert_eq!(restored.audio.unwrap().mix.volume, 1.0);
+    let decode = |path: &std::path::Path| {
+        let result = Command::new(&ffmpeg)
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args(["-vn", "-ac", "1", "-ar", "22050", "-f", "f32le", "pipe:1"])
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        result
+            .stdout
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect::<Vec<_>>()
+    };
+    let rms = |samples: &[f32], start: f64, end: f64| {
+        let slice = &samples[(start * 22050.0) as usize..(end * 22050.0) as usize];
+        (slice.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>() / slice.len() as f64).sqrt()
+    };
+    let baseline = dir.path().join("baseline.mp4");
+    export::mp4(&project, &baseline, &cancel, |_| {}).unwrap();
+    let base = decode(&baseline);
+    project.audio.as_mut().unwrap().mix = model::AudioMix {
+        volume: 0.25,
+        muted: false,
+        fade_in_ms: 500,
+        fade_out_ms: 500,
+    };
+    let mixed = dir.path().join("mixed.mp4");
+    export::mp4(&project, &mixed, &cancel, |_| {}).unwrap();
+    let samples = decode(&mixed);
+    let ratio = rms(&samples, 0.7, 1.3) / rms(&base, 0.7, 1.3);
+    assert!((ratio - 0.25).abs() < 0.02, "volume ratio {ratio}");
+    assert!(rms(&samples, 0.05, 0.15) < rms(&samples, 0.7, 1.3) * 0.35);
+    assert!(rms(&samples, 1.85, 1.95) < rms(&samples, 0.7, 1.3) * 0.35);
+    project.audio.as_mut().unwrap().mix.muted = true;
+    let muted = dir.path().join("muted.mp4");
+    export::mp4(&project, &muted, &cancel, |_| {}).unwrap();
+    assert!(decode(&muted).iter().all(|x| x.abs() < 0.00001));
+    project.audio.as_mut().unwrap().mix.volume = f64::NAN;
+    assert!(project.validate().is_err());
 }

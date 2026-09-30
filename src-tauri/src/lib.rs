@@ -304,12 +304,14 @@ async fn check_seams(project: Project) -> Result<Vec<f64>, String> {
                     width,
                     height,
                     &options,
+                    false,
                 )?;
                 let b = render::raster(
                     &render::svg(&pair[1].scene, 0.0, project.width, project.height),
                     width,
                     height,
                     &options,
+                    false,
                 )?;
                 let changed = a
                     .data()

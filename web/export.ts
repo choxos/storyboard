@@ -47,6 +47,8 @@ export async function exportVideo(
     chunks: Blob[] = [];
   let audioContext: AudioContext | undefined,
     source: AudioBufferSourceNode | undefined,
+    fadeIn: GainNode | undefined,
+    fadeOut: GainNode | undefined,
     recorder: MediaRecorder | undefined;
   const visible = () => {
     if (document.hidden)
@@ -64,7 +66,9 @@ export async function exportVideo(
       const destination = audioContext.createMediaStreamDestination();
       source = audioContext.createBufferSource();
       source.buffer = buffer;
-      source.connect(destination);
+      fadeIn = audioContext.createGain();
+      fadeOut = audioContext.createGain();
+      source.connect(fadeIn).connect(fadeOut).connect(destination);
       for (const track of destination.stream.getAudioTracks())
         stream.addTrack(track);
     }
@@ -93,13 +97,34 @@ export async function exportVideo(
       };
     });
     recorder.start(1000);
-    source?.start();
+    let audioStart = 0;
+    if (source && audioContext && fadeIn && fadeOut && project.audio) {
+      audioStart = audioContext.currentTime;
+      const start = audioStart,
+        mix = project.audio.mix;
+      const end = Math.min(total, project.audio.duration_ms) / 1000;
+      const volume = mix?.muted ? 0 : (mix?.volume ?? 1);
+      const fadeInTime = Math.min((mix?.fade_in_ms ?? 0) / 1000, end);
+      const fadeOutTime = Math.min((mix?.fade_out_ms ?? 0) / 1000, end);
+      fadeIn.gain.setValueAtTime(fadeInTime ? 0 : volume, start);
+      if (fadeInTime)
+        fadeIn.gain.linearRampToValueAtTime(volume, start + fadeInTime);
+      fadeOut.gain.setValueAtTime(1, start);
+      if (fadeOutTime) {
+        fadeOut.gain.setValueAtTime(1, start + end - fadeOutTime);
+        fadeOut.gain.linearRampToValueAtTime(0, start + end);
+      }
+      source.start(start);
+    }
     const start = performance.now();
     try {
       while (true) {
         visible();
         if (recordingError) throw recordingError;
-        const elapsed = performance.now() - start;
+        const tick = performance.now();
+        const elapsed = audioContext
+          ? (audioContext.currentTime - audioStart) * 1000
+          : tick - start;
         if (elapsed >= total) break;
         const [scene, local] = sceneAt(project, elapsed);
         await drawFrame(ctx, scene, local, project.width, project.height);
@@ -107,10 +132,7 @@ export async function exportVideo(
         await new Promise((resolve) =>
           setTimeout(
             resolve,
-            Math.max(
-              0,
-              1000 / project.fps - (performance.now() - start - elapsed),
-            ),
+            Math.max(0, 1000 / project.fps - (performance.now() - tick)),
           ),
         );
       }

@@ -120,6 +120,7 @@ pub fn analyze_samples(samples: &[f32], sample_rate: usize) -> AudioTrack {
         offset_ms,
         beats_per_bar: 4,
         sections,
+        mix: Default::default(),
         confidence: if total > 0.0 {
             (best.1 / total).clamp(0.0, 1.0)
         } else {

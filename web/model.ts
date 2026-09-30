@@ -65,6 +65,12 @@ export interface AudioTrack {
   beats_per_bar: number;
   sections: number[];
   confidence: number;
+  mix?: {
+    volume: number;
+    muted: boolean;
+    fade_in_ms: number;
+    fade_out_ms: number;
+  };
 }
 export interface Project {
   version: number;
@@ -96,13 +102,18 @@ const easings = ["linear", "ease_in", "ease_out", "ease_in_out", "step"];
 function require(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
-function object(value: unknown, keys: string): Record<string, unknown> {
+function object(
+  value: unknown,
+  keys: string,
+  optional = "",
+): Record<string, unknown> {
   require(value !== null &&
     typeof value === "object" &&
     !Array.isArray(value), "Expected an object.");
   const v = value as Record<string, unknown>,
-    expected = keys.split(" ");
-  require(Object.keys(v).length === expected.length &&
+    expected = keys.split(" "),
+    allowed = [...expected, ...(optional ? optional.split(" ") : [])];
+  require(Object.keys(v).every((key) => allowed.includes(key)) &&
     expected.every((k) =>
       Object.hasOwn(v, k),
     ), "Missing or unknown project fields.");
@@ -247,6 +258,7 @@ export function validateProject(value: unknown): asserts value is Project {
     const a = object(
       p.audio,
       "path name duration_ms peaks bpm offset_ms beats_per_bar sections confidence",
+      "mix",
     );
     string(a.path, 10000);
     string(a.name, 1000);
@@ -259,6 +271,13 @@ export function validateProject(value: unknown): asserts value is Project {
     array(a.sections, 1000);
     a.peaks.forEach((v) => number(v, 0, 1));
     a.sections.forEach((v) => number(v, 0, Number(a.duration_ms), true));
+    if (a.mix !== undefined) {
+      const mix = object(a.mix, "volume muted fade_in_ms fade_out_ms");
+      number(mix.volume, 0, 1);
+      require(typeof mix.muted === "boolean", "Mute must be true or false.");
+      number(mix.fade_in_ms, 0, 600000, true);
+      number(mix.fade_out_ms, 0, 600000, true);
+    }
   }
 }
 export function parseProject(text: string): Project {

@@ -145,6 +145,28 @@ pub struct AudioTrack {
     pub beats_per_bar: u32,
     pub sections: Vec<u32>,
     pub confidence: f64,
+    #[serde(default)]
+    pub mix: AudioMix,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioMix {
+    pub volume: f64,
+    pub muted: bool,
+    pub fade_in_ms: u32,
+    pub fade_out_ms: u32,
+}
+
+impl Default for AudioMix {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            muted: false,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
+        }
+    }
 }
 
 impl Scene {
@@ -279,12 +301,16 @@ impl Project {
                 || a.sections.len() > 1000
                 || !a.confidence.is_finite()
                 || !(0.0..=1.0).contains(&a.confidence)
+                || !a.mix.volume.is_finite()
+                || !(0.0..=1.0).contains(&a.mix.volume)
+                || a.mix.fade_in_ms > MAX_DURATION
+                || a.mix.fade_out_ms > MAX_DURATION
                 || a.sections.iter().any(|s| *s > a.duration_ms)
                 || a.peaks
                     .iter()
                     .any(|p| !p.is_finite() || !(0.0..=1.0).contains(p)))
         {
-            return Err("Invalid audio analysis or beat grid.".into());
+            return Err("Invalid audio analysis, beat grid, or sound mix.".into());
         }
         Ok(())
     }
