@@ -1,4 +1,5 @@
 import { canvasSizes, resizeCanvas } from "./canvas.js";
+import { moveElement, motionPresets, applyMotionPreset } from "./editing.js";
 
 const api = window.__TAURI__ || window.storyboardWeb;
 const browser = !!api?.browser;
@@ -66,6 +67,9 @@ const s = {
   modelRequests: {},
   persist: Promise.resolve(),
   persistTimer: 0,
+  layer: null,
+  layerScene: null,
+  drag: null,
 };
 const audio = new Audio();
 s.drafts = {};
@@ -105,7 +109,8 @@ function shell() {
       <button class="copy-path" data-action="copy-path">${icon("copy")}Copy path</button><button class="primary" data-action="present">${icon("expand")}Present</button>
     </header>
     <main class="workspace"><section class="preview-pane" aria-label="Video preview"><div class="meta" id="scene-meta"></div>
-      <div class="canvas-well"><div class="canvas" id="canvas" role="img" aria-label="Scene preview"></div></div>
+      <div class="canvas-tools" id="canvas-tools" aria-label="Canvas editing tools"></div>
+      <div class="canvas-well"><div class="canvas" id="canvas" tabindex="0" role="group" aria-label="Scene preview" aria-describedby="canvas-hint"></div></div>
       <div class="transport"><div class="segment dark" aria-label="Playback scope"><button data-mode="scene">This scene</button><button data-mode="project">Whole video</button></div>
         <button class="play" data-action="play" aria-label="Play" title="Play or pause (Space)">${icon("play")}</button>
         <div class="timecode"><input id="time-ms" type="number" min="0" step="1" aria-label="Playhead in milliseconds" title="Exact playhead position in milliseconds"><span class="muted">ms / <span id="total-time"></span></span></div>
@@ -114,7 +119,7 @@ function shell() {
       </div><div class="audio-lane" id="audio-lane"></div>
     </section><aside class="sidebar" id="sidebar" aria-label="Scene editor"></aside></main>
     <section class="filmstrip" id="filmstrip" aria-label="Scenes"></section>
-    <footer class="statusbar"><span id="save-state"></span><span id="project-stats"></span><span class="spacer"></span><span id="job-status"></span><span>Space to play &nbsp; / &nbsp; Double-click a layer to edit</span></footer>`;
+    <footer class="statusbar"><span id="save-state"></span><span id="project-stats"></span><span class="spacer"></span><span id="job-status"></span><button class="quiet" data-action="shortcuts">Keyboard shortcuts</button></footer>`;
   new ResizeObserver(fitCanvas).observe($(".canvas-well"));
   if (browser)
     $(".brand").insertAdjacentHTML(
@@ -129,6 +134,11 @@ function shell() {
     const id = e.target.closest("[data-element]")?.dataset.element;
     openInspector(id);
   });
+  $("#canvas").addEventListener("pointerdown", beginDrag);
+  $("#canvas").addEventListener("pointermove", dragLayer);
+  $("#canvas").addEventListener("pointerup", () => finishDrag(true));
+  $("#canvas").addEventListener("pointercancel", () => finishDrag(false));
+  $("#canvas").addEventListener("lostpointercapture", () => finishDrag(false));
   document.addEventListener("click", click);
   document.addEventListener("keydown", keys);
   document.addEventListener("change", change);
@@ -160,6 +170,7 @@ function fitCanvas() {
   const width = Math.min(well.clientWidth, (well.clientHeight - 10) * ratio);
   $("#canvas").style.width = `${Math.max(1, width)}px`;
   $("#canvas").style.aspectRatio = String(ratio);
+  drawSelection();
 }
 function refresh() {
   s.selected = Math.min(s.selected, s.project.scenes.length - 1);
@@ -176,6 +187,7 @@ function refresh() {
     .querySelectorAll("[data-mode]")
     .forEach((b) => b.classList.toggle("active", b.dataset.mode === s.mode));
   sidebar();
+  layerTools();
   filmstrip();
   audioLane();
   transport();
@@ -214,6 +226,9 @@ function transport() {
     "x1",
     String((globalTime() / duration()) * 1000),
   );
+  if ($("#still-frame-time"))
+    $("#still-frame-time").textContent =
+      `${doc().scene.name} at ${Math.round(s.mode === "scene" ? s.time : s.time - sceneStart())} ms`;
   $("#audio-playhead")?.setAttribute(
     "x2",
     String((globalTime() / duration()) * 1000),
@@ -222,6 +237,10 @@ function transport() {
 async function requestFrame() {
   const request = ++s.frameRequest;
   const scene = clone(doc().scene);
+  if (s.drag?.sceneId === scene.id) {
+    const element = scene.elements.find((e) => e.id === s.drag.id);
+    if (element) moveElement(element, s.drag.dx, s.drag.dy);
+  }
   const local = s.mode === "scene" ? s.time : s.time - sceneStart();
   try {
     const svg = await invoke("render_frame", {
@@ -236,11 +255,129 @@ async function requestFrame() {
         "aria-label",
         `${scene.name} at ${Math.round(local)} milliseconds`,
       );
+      drawSelection();
     }
   } catch (e) {
     pause();
     toast(e, true);
   }
+}
+function selectedElement() {
+  return s.layerScene === doc().scene.id
+    ? doc().scene.elements.find((e) => e.id === s.layer)
+    : null;
+}
+function layerTools() {
+  if (!selectedElement()) s.layer = null;
+  $("#canvas-tools").innerHTML =
+    `<label>Layer<select id="canvas-layer" aria-label="Select canvas layer"><option value="">Select a layer</option>${doc()
+      .scene.elements.map(
+        (e) =>
+          `<option value="${esc(e.id)}" ${s.layer === e.id ? "selected" : ""}>${esc(e.text.slice(0, 30) || e.id)}</option>`,
+      )
+      .join(
+        "",
+      )}</select></label><button data-action="edit-selected" ${s.layer && !s.busy ? "" : "disabled"}>Edit layer</button><button class="quiet" data-action="clear-selection" ${s.layer ? "" : "disabled"}>Deselect</button><span id="canvas-hint">${s.layer ? "Drag to move · Arrows nudge · Shift: 10 px" : "Click a layer or choose one above"}</span>`;
+  $("#canvas-layer").disabled = s.busy;
+  $("#canvas-layer").onchange = () => {
+    selectLayer($("#canvas-layer").value || null);
+    $("#canvas").focus({ preventScroll: true });
+  };
+}
+function selectLayer(id) {
+  pause();
+  s.layer = id;
+  s.layerScene = doc().scene.id;
+  layerTools();
+  drawSelection();
+}
+function drawSelection() {
+  $("#selection-outline")?.remove();
+  if (!s.project || !selectedElement() || s.playing || s.presenting) return;
+  const canvas = $("#canvas");
+  const node = [...canvas.querySelectorAll("[data-element]")].find(
+    (e) => e.dataset.element === s.layer,
+  );
+  if (!node) return;
+  const box = node.getBoundingClientRect(),
+    parent = canvas.getBoundingClientRect();
+  const outline = document.createElement("div");
+  outline.id = "selection-outline";
+  outline.setAttribute("aria-hidden", "true");
+  Object.assign(outline.style, {
+    left: `${box.left - parent.left}px`,
+    top: `${box.top - parent.top}px`,
+    width: `${Math.max(1, box.width)}px`,
+    height: `${Math.max(1, box.height)}px`,
+  });
+  canvas.append(outline);
+}
+function beginDrag(event) {
+  if (event.button !== 0 || s.busy || s.editing || s.presenting || s.drag)
+    return;
+  const id = event.target.closest("[data-element]")?.dataset.element;
+  selectLayer(id || null);
+  if (!id) return;
+  const canvas = $("#canvas"),
+    box = canvas.getBoundingClientRect();
+  canvas.focus({ preventScroll: true });
+  s.drag = {
+    id,
+    sceneId: doc().scene.id,
+    pointer: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    sx: s.project.width / box.width,
+    sy: s.project.height / box.height,
+    dx: 0,
+    dy: 0,
+    moved: false,
+  };
+  canvas.setPointerCapture(event.pointerId);
+}
+function dragLayer(event) {
+  const drag = s.drag;
+  if (!drag || drag.pointer !== event.pointerId) return;
+  const dx = event.clientX - drag.x,
+    dy = event.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+  drag.moved = true;
+  drag.dx = Math.round(dx * drag.sx);
+  drag.dy = Math.round(dy * drag.sy);
+  if (event.shiftKey) {
+    if (Math.abs(dx) >= Math.abs(dy)) drag.dy = 0;
+    else drag.dx = 0;
+  }
+  if (!drag.frame)
+    drag.frame = requestAnimationFrame(() => {
+      drag.frame = 0;
+      if (s.drag === drag) requestFrame();
+    });
+}
+async function finishDrag(apply) {
+  const drag = s.drag;
+  if (!drag) return;
+  s.drag = null;
+  cancelAnimationFrame(drag.frame);
+  const canvas = $("#canvas");
+  if (canvas.hasPointerCapture(drag.pointer))
+    canvas.releasePointerCapture(drag.pointer);
+  if (
+    apply &&
+    drag.moved &&
+    (drag.dx || drag.dy) &&
+    drag.sceneId === doc().scene.id
+  ) {
+    await moveSelected(drag.dx, drag.dy);
+  } else if (drag.moved) requestFrame();
+}
+function moveSelected(dx, dy) {
+  const element = selectedElement();
+  if (!element) return;
+  return commit(() => {
+    revision(doc(), "Before moving a layer");
+    moveElement(element, dx, dy);
+  });
 }
 function filmstrip() {
   $("#filmstrip").innerHTML =
@@ -272,6 +409,11 @@ function sidebar() {
   if (s.tab === "render") {
     $("#sidebar").innerHTML =
       `<div class="render-panel"><h2>Ready for the big screen.</h2><p>Every frame uses the same Rust animation engine as your preview. Export an H.264 MP4 with your soundtrack.</p><dl><dt>Canvas</dt><dd>${s.project.width} × ${s.project.height}</dd><dt>Duration</dt><dd>${seconds(duration())}</dd><dt>Scenes</dt><dd>${s.project.scenes.length}</dd><dt>Audio</dt><dd>${s.project.audio ? esc(s.project.audio.name) : "No soundtrack"}</dd></dl><label>Frame rate<select id="fps">${[24, 30, 60].map((n) => `<option ${n === s.project.fps ? "selected" : ""}>${n}</option>`).join("")}</select></label><button class="primary" data-action="export" ${s.busy ? "disabled" : ""}>Export MP4</button><button data-action="seams" ${s.busy ? "disabled" : ""}>Check scene seams</button><div class="progress"><div id="export-progress"></div></div><p id="export-status">${s.ffmpeg ? "FFmpeg ready. Choose a destination to render." : "Install FFmpeg with brew install ffmpeg, then reopen Storyboard."}</p><button data-action="cancel" class="${s.busy ? "" : "hidden"}">Cancel export</button><p>Projects are saved separately as editable .storyboard files.</p></div>`;
+    $('[data-action="export"]').insertAdjacentHTML(
+      "afterend",
+      `<div class="still-exports"><button data-action="export-png" ${s.busy ? "disabled" : ""}>Save PNG frame</button><button data-action="export-svg" ${s.busy ? "disabled" : ""}>Save SVG frame</button></div><p class="muted">Current frame: <span id="still-frame-time">${esc(doc().scene.name)} at ${Math.round(s.mode === "scene" ? s.time : s.time - sceneStart())} ms</span>. Uses full canvas resolution.</p>`,
+    );
+    if (s.frameExport) $('[data-action="cancel"]').classList.add("hidden");
     if (browser) {
       $(".render-panel > p").textContent =
         "Record video in this browser with your soundtrack. Keep this tab visible. Recording runs in real time; busy devices may drop frames. Use the desktop app for frame-exact export.";
@@ -288,6 +430,10 @@ function sidebar() {
     <div class="tools"><button data-action="undo" ${s.undo.length && !s.busy ? "" : "disabled"} title="Undo (Command+Z)">${icon("undo")}Undo</button>${s.scope === "scene" ? `<button data-action="versions">${icon("clock")}Versions (${doc().revisions.length})</button><button class="icon" data-action="duplicate" aria-label="Duplicate scene" title="Duplicate scene">${icon("copy")}</button><button class="icon danger" data-action="delete" aria-label="Delete scene" title="Delete scene" ${s.project.scenes.length === 1 ? "disabled" : ""}>${icon("trash")}</button>` : '<button data-action="seams">Check seams</button>'}<span class="spacer"></span><button class="quiet" data-action="clear-chat" title="Clear conversation">Clear chat</button></div>
     <div class="chat" id="chat">${chat.length ? chat.map((m) => `<div class="message ${m.role === "user" ? "user" : ""}"><small>${esc(m.role === "user" ? "You" : m.provider)}</small>${esc(m.text)}</div>`).join("") : `<div class="welcome"><div class="spark">${icon("spark")}</div><h2>${s.scope === "scene" ? "A scene starts with a thought." : "Think in scenes."}</h2><p>${s.scope === "scene" ? "Describe what should change. Refine the motion, the words, or one precise moment. Every iteration stays in your history." : "Describe the whole story. Claude or Codex can create, reorder, and refine scenes together."}</p><button class="suggestion" data-prompt="${s.scope === "scene" ? "Hold the headline for 500 ms, then bring the shapes in one at a time." : "Create a 15-second product launch with five scenes, clean typography, and precise transitions."}">${s.scope === "scene" ? "Hold the headline a little longer" : "Create a 15-second product launch"}</button><button class="suggestion" data-prompt="${s.scope === "scene" ? "Make the motion quieter. Use gentle easing and let everything settle by 1800 ms." : "Make every scene flow into the next. Keep the palette and visual rhythm consistent."}">${s.scope === "scene" ? "Give the motion room to breathe" : "Find a consistent visual rhythm"}</button><button class="suggestion" data-action="inspector">${icon("sliders")} Edit layers & exact timing</button></div>`}${s.busy ? '<p class="muted"><span class="busy-indicator"></span>Designing your next frame...</p>' : ""}</div>
     <div class="composer"><div id="model-picker"></div><div class="composer-box"><textarea id="prompt" aria-label="Prompt" placeholder="${s.scope === "scene" ? "What should change? e.g. “Slide the card in at 750 ms.”" : "Describe your video, or ask for changes across every scene."}" ${s.busy ? "disabled" : ""}></textarea><div class="composer-bottom"><select id="provider" aria-label="AI provider" ${s.busy ? "disabled" : ""}><option value="claude" ${s.provider === "claude" ? "selected" : ""}>Claude</option><option value="codex" ${s.provider === "codex" ? "selected" : ""}>Codex</option></select><span class="spacer"></span><button data-action="${s.busy ? "cancel" : "send"}" class="primary">${s.busy ? "Cancel" : "Send"}</button></div></div><div class="composer-hint"><span>⌘↵ to send</span><button class="quiet" data-action="inspector" style="font-size:10px;padding:0">Layers & timing</button><span>Uses your CLI login</span></div></div>`;
+  $('[data-action="undo"]').insertAdjacentHTML(
+    "afterend",
+    `<button class="icon redo" data-action="redo" aria-label="Redo" title="Redo (Command+Shift+Z)" ${s.redo.length && !s.busy ? "" : "disabled"}>${icon("undo")}</button>`,
+  );
   modelPicker();
   if (browser) {
     $('[data-action="send"]')?.replaceChildren("Prepare prompt");
@@ -491,6 +637,7 @@ function selectAtTime() {
   if (index !== s.selected) {
     s.selected = index;
     sidebar();
+    layerTools();
     document.querySelectorAll("[data-scene]").forEach((b) => {
       b.classList.toggle("selected", Number(b.dataset.scene) === index);
       b.setAttribute("aria-pressed", String(Number(b.dataset.scene) === index));
@@ -539,7 +686,7 @@ function persist() {
   return s.persist;
 }
 async function commit(mutator) {
-  if (s.busy || s.editing) {
+  if (s.busy || s.editing || s.drag) {
     toast("Finish or cancel the current change first.");
     return false;
   }
@@ -574,7 +721,7 @@ function revision(d, label) {
   if (d.revisions.length > 50) d.revisions.shift();
 }
 function history(redo = false) {
-  if (s.busy) return;
+  if (s.busy || s.editing || s.drag) return;
   const source = redo ? s.redo : s.undo;
   const dest = redo ? s.undo : s.redo;
   if (!source.length) return;
@@ -861,9 +1008,41 @@ async function exportVideo() {
   } finally {
     s.busy = false;
     status();
-    $('[data-action="export"]')?.removeAttribute("disabled");
+    for (const action of ["export", "export-png", "export-svg"])
+      $(`[data-action="${action}"]`)?.removeAttribute("disabled");
     $('[data-action="seams"]')?.removeAttribute("disabled");
     $('[data-action="cancel"]')?.classList.add("hidden");
+  }
+}
+
+async function exportStill(format) {
+  if (s.busy || s.drag) return;
+  pause();
+  s.busy = true;
+  s.frameExport = true;
+  sidebar();
+  status();
+  let message = "Frame export canceled.";
+  try {
+    const path = await job("export_frame", {
+      scene: clone(doc().scene),
+      timeMs: Math.max(0, s.mode === "scene" ? s.time : s.time - sceneStart()),
+      width: s.project.width,
+      height: s.project.height,
+      format,
+    });
+    if (path)
+      message = `${format.toUpperCase()} ${browser ? "download ready" : "saved"}: ${path}`;
+    toast(message);
+  } catch (error) {
+    message = String(error);
+    toast(message, true);
+  } finally {
+    s.busy = false;
+    s.frameExport = false;
+    sidebar();
+    status();
+    if ($("#export-status")) $("#export-status").textContent = message;
   }
 }
 
@@ -1103,6 +1282,7 @@ async function checkSeams() {
 function click(e) {
   const b = e.target.closest("button");
   if (!b) return;
+  if (s.drag) return;
   if (b.dataset.scene !== undefined) {
     select(Number(b.dataset.scene));
     return;
@@ -1143,6 +1323,14 @@ function click(e) {
     save: () => save(),
     send,
     undo: () => history(),
+    redo: () => history(true),
+    "edit-selected": () => openInspector(s.layer),
+    "clear-selection": () => selectLayer(null),
+    shortcuts: () =>
+      modal(
+        "Keyboard shortcuts",
+        `<dl class="shortcut-list"><dt>Space</dt><dd>Play or pause</dd><dt>Left / Right</dt><dd>Step one frame when no layer is selected</dd><dt>Arrow keys</dt><dd>Move selected layer by 1 pixel</dd><dt>Shift + Arrow keys</dt><dd>Move selected layer by 10 pixels</dd><dt>Shift + Drag</dt><dd>Move along one axis</dd><dt>Escape</dt><dd>Cancel a drag, deselect, or exit presentation</dd><dt>Command / Ctrl + Z</dt><dd>Undo</dd><dt>Command / Ctrl + Shift + Z</dt><dd>Redo</dd><dt>Command / Ctrl + S</dt><dd>Save project</dd><dt>Command / Ctrl + O</dt><dd>Open project</dd><dt>Command / Ctrl + Enter</dt><dd>${browser ? "Prepare assistant prompt" : "Send prompt"}</dd><dt>Option / Alt + Left / Right</dt><dd>Reorder selected scene</dd></dl><p>Dragging and nudging shift the layer's entire position animation. Double-click a layer to edit its keyframes. Use the Layer selector to reach overlapping or transparent layers.</p>`,
+      ),
     versions,
     "project-settings": openProjectSettings,
     "canvas-settings": () => openProjectSettings(true),
@@ -1150,6 +1338,8 @@ function click(e) {
     inspector: () => openInspector(),
     import: () => importAudio(),
     export: exportVideo,
+    "export-png": () => exportStill("png"),
+    "export-svg": () => exportStill("svg"),
     seams: checkSeams,
     "audio-grid": audioGrid,
     "snap-cuts": snapCuts,
@@ -1238,7 +1428,7 @@ function openInspector(elementId) {
     $("#layer-list").innerHTML = draft.elements
       .map(
         (e, i) =>
-          `<button data-layer="${i}" class="${i === selected ? "active" : ""}" title="${esc(e.id)}">${esc(e.text?.slice(0, 22) || e.id)}</button>`,
+          `<button data-layer="${i}" class="${i === selected ? "active" : ""}" title="${esc(e.id)}" aria-pressed="${i === selected}">${i + 1}. ${esc(e.text?.slice(0, 22) || e.kind)}</button>`,
       )
       .join("");
     document.querySelectorAll("[data-layer]").forEach(
@@ -1273,6 +1463,41 @@ function openInspector(elementId) {
         .join(
           "",
         )}</select></label><button id="add-track">Add animation</button></div>`;
+    $("#layer-form").insertAdjacentHTML(
+      "afterbegin",
+      `<div class="layer-actions"><button id="duplicate-layer" ${draft.elements.length >= 250 ? "disabled" : ""}>Duplicate layer</button><button id="layer-back" ${selected === 0 ? "disabled" : ""}>Send backward</button><button id="layer-forward" ${selected === draft.elements.length - 1 ? "disabled" : ""}>Bring forward</button></div><p>Later layers draw in front. Duplicate keeps motion and offsets position by 24 px.</p><div class="form-row"><label>Motion preset<select id="motion-preset">${Object.entries(
+        motionPresets,
+      )
+        .map(([id, name]) => `<option value="${id}">${name}</option>`)
+        .join(
+          "",
+        )}</select></label><button id="apply-preset">Apply preset</button></div><p>Presets use up to 600 ms and replace only their affected tracks. Base values set the final position, scale, and opacity. Other tracks remain unchanged.</p>`,
+    );
+    $("#duplicate-layer").onclick = () => {
+      const copy = clone(el);
+      copy.id = uid();
+      moveElement(copy, 24, 24);
+      draft.elements.splice(selected + 1, 0, copy);
+      selected++;
+      draw();
+    };
+    const orderLayer = (delta) => {
+      const [layer] = draft.elements.splice(selected, 1);
+      selected += delta;
+      draft.elements.splice(selected, 0, layer);
+      draw();
+    };
+    $("#layer-back").onclick = () => orderLayer(-1);
+    $("#layer-forward").onclick = () => orderLayer(1);
+    $("#apply-preset").onclick = () => {
+      applyMotionPreset(
+        el,
+        $("#motion-preset").value,
+        draft.duration_ms,
+        Math.round(s.project.height * 0.1),
+      );
+      draw();
+    };
     document.querySelectorAll("[data-prop]").forEach(
       (input) =>
         (input.onchange = () => {
@@ -1392,6 +1617,8 @@ function openInspector(elementId) {
         const current = doc();
         revision(current, "Before manual layer edit");
         current.scene = clone(draft);
+        s.layer = draft.elements[selected]?.id || null;
+        s.layerScene = current.scene.id;
         s.time = 0;
       })
     )
@@ -1423,6 +1650,13 @@ function change(e) {
 function keys(e) {
   const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
   const cmd = e.metaKey || e.ctrlKey;
+  if (s.drag) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      finishDrag(false);
+    }
+    return;
+  }
   if (e.key === "Escape" && s.presenting) {
     $('[data-action="present"]').click();
     return;
@@ -1449,6 +1683,26 @@ function keys(e) {
     return;
   }
   if (typing) return;
+  if (e.key === "Escape" && s.layer) {
+    e.preventDefault();
+    selectLayer(null);
+    return;
+  }
+  if (
+    selectedElement() &&
+    !s.presenting &&
+    !e.altKey &&
+    !cmd &&
+    ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)
+  ) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    moveSelected(
+      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0,
+      e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0,
+    );
+    return;
+  }
   if (cmd && e.key.toLowerCase() === "z") {
     e.preventDefault();
     history(e.shiftKey);

@@ -88,6 +88,7 @@ export async function drawFrame(
   time: number,
   width: number,
   height: number,
+  transparent = false,
 ) {
   const url = URL.createObjectURL(
     new Blob([svg(scene, time, width, height)], { type: "image/svg+xml" }),
@@ -96,8 +97,12 @@ export async function drawFrame(
     const image = new Image();
     image.src = url;
     await image.decode();
-    context.fillStyle = "white";
-    context.fillRect(0, 0, context.canvas.width, context.canvas.height);
+    if (transparent)
+      context.clearRect(0, 0, context.canvas.width, context.canvas.height);
+    else {
+      context.fillStyle = "white";
+      context.fillRect(0, 0, context.canvas.width, context.canvas.height);
+    }
     context.drawImage(image, 0, 0, context.canvas.width, context.canvas.height);
   } finally {
     URL.revokeObjectURL(url);
@@ -127,4 +132,27 @@ export async function checkSeams(project: Project): Promise<number[]> {
     result.push((changed / (canvas.width * canvas.height)) * 100);
   }
   return result;
+}
+
+export async function frameImage(
+  scene: Scene,
+  time: number,
+  width: number,
+  height: number,
+): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas is unavailable.");
+  await drawFrame(context, scene, time, width, height, true);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (blob) =>
+        blob
+          ? resolve(blob)
+          : reject(new Error("PNG encoding failed. Try a smaller canvas.")),
+      "image/png",
+    ),
+  );
 }

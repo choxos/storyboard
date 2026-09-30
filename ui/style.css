@@ -244,6 +244,81 @@ label {
   width: 100%;
   height: 100%;
 }
+.canvas {
+  touch-action: none;
+  user-select: none;
+}
+.canvas [data-element] {
+  cursor: grab;
+}
+.canvas:focus-visible {
+  outline: 3px solid #8babff;
+  outline-offset: 3px;
+}
+#selection-outline {
+  position: absolute;
+  border: 2px solid var(--blue);
+  pointer-events: none;
+  border-radius: 2px;
+}
+.canvas-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-bottom: 9px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.canvas-tools label {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: row;
+  gap: 7px;
+  margin: 0;
+  min-width: 0;
+}
+.canvas-tools select {
+  max-width: 210px;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.canvas-tools button {
+  font-size: 11px;
+  padding: 4px 7px;
+}
+#canvas-hint {
+  color: #72727a;
+  font-size: 10px;
+}
+.layer-actions,
+.still-exports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.layer-actions button {
+  font-size: 12px;
+}
+.redo svg {
+  transform: scaleX(-1);
+}
+.shortcut-list {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 2fr;
+  gap: 10px 18px;
+}
+.shortcut-list dt {
+  font-weight: 600;
+}
+.shortcut-list dd {
+  margin: 0;
+}
+.statusbar button {
+  font-size: 10px;
+  padding: 1px 5px;
+}
 .transport {
   display: flex;
   align-items: center;
@@ -337,6 +412,7 @@ label {
 }
 .tools {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 9px 12px;
@@ -714,6 +790,7 @@ label {
 .presenting .filmstrip,
 .presenting .statusbar,
 .presenting .meta,
+.presenting .canvas-tools,
 .presenting .audio-lane {
   display: none;
 }

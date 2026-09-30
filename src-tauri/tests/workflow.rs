@@ -77,3 +77,24 @@ fn real_audio_export_and_cancellation_preserve_destination() {
     );
     assert_eq!(std::fs::read(&video).unwrap(), before);
 }
+
+#[test]
+fn still_exports_match_canvas_and_preserve_files_on_invalid_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = model::demo_project();
+    let scene = &project.scenes[0].scene;
+    let path = dir.path().join("frame.png");
+    export::frame(scene, 1200.0, 320, 240, "png", &path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 320);
+    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 240);
+    assert!(export::frame(scene, f64::NAN, 320, 240, "png", &path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let svg = dir.path().join("frame.svg");
+    export::frame(scene, 1200.0, 320, 240, "svg", &svg).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(svg).unwrap(),
+        storyboard::render::svg(scene, 1200.0, 320, 240)
+    );
+}

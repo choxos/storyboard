@@ -1,5 +1,5 @@
 use crate::{
-    model::Project,
+    model::{Project, Scene, validate_canvas},
     process::{program, terminate},
     render,
 };
@@ -12,6 +12,38 @@ use std::{
     time::Duration,
 };
 use wait_timeout::ChildExt;
+
+pub fn frame(
+    scene: &Scene,
+    time_ms: f64,
+    width: u32,
+    height: u32,
+    format: &str,
+    path: &Path,
+) -> Result<(), String> {
+    scene.validate()?;
+    validate_canvas(width, height)?;
+    if !time_ms.is_finite() || !["png", "svg"].contains(&format) {
+        return Err("Choose PNG or SVG and a finite frame time.".into());
+    }
+    let svg = render::svg(scene, time_ms, width, height);
+    let bytes = if format == "svg" {
+        svg.into_bytes()
+    } else {
+        render::raster(&svg, width, height, &render::options())?
+            .encode_png()
+            .map_err(|e| e.to_string())?
+    };
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    file.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 pub fn mp4(
     project: &Project,

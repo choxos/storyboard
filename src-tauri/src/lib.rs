@@ -253,6 +253,37 @@ fn cancel_job(jobs: tauri::State<'_, Jobs>) {
 }
 
 #[tauri::command]
+async fn export_frame(
+    scene: Scene,
+    time_ms: f64,
+    width: u32,
+    height: u32,
+    format: String,
+    jobs: tauri::State<'_, Jobs>,
+) -> Result<Option<String>, String> {
+    scene.validate()?;
+    model::validate_canvas(width, height)?;
+    if !time_ms.is_finite() || !["png", "svg"].contains(&format.as_str()) {
+        return Err("Choose PNG or SVG and a finite frame time.".into());
+    }
+    let (guard, _) = jobs.begin()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        let path = rfd::FileDialog::new()
+            .add_filter(format.to_uppercase(), &[format.as_str()])
+            .set_file_name(format!("Storyboard-frame.{format}"))
+            .save_file();
+        path.map(|path| {
+            export::frame(&scene, time_ms, width, height, &format, &path)?;
+            Ok(path.to_string_lossy().into_owned())
+        })
+        .transpose()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn check_seams(project: Project) -> Result<Vec<f64>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         project.validate()?;
@@ -313,6 +344,7 @@ pub fn run() {
             import_audio,
             generate,
             export_video,
+            export_frame,
             cancel_job,
             check_seams
         ])

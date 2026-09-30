@@ -5,7 +5,7 @@ import {
   validateCanvas,
   type Project,
 } from "./model";
-import { svg, checkSeams } from "./render";
+import { svg, checkSeams, frameImage } from "./render";
 import { analyzeAudio } from "./audio";
 import { stored, storeFile, download, pickFile } from "./files";
 import { exportVideo, videoFormat } from "./export";
@@ -79,14 +79,26 @@ async function invoke(
     return;
   }
   if (name === "cancel_model_discovery") return;
-  if (name === "render_frame") {
+  if (name === "render_frame" || name === "export_frame") {
     validateScene(args.scene);
     const width = Number(args.width),
       height = Number(args.height),
       time = Number(args.timeMs);
     validateCanvas(width, height);
     if (!Number.isFinite(time)) throw new Error("Invalid frame time.");
-    return svg(args.scene, time, width, height);
+    if (name === "render_frame") return svg(args.scene, time, width, height);
+    if (args.format !== "png" && args.format !== "svg")
+      throw new Error("Choose PNG or SVG.");
+    const blob =
+      args.format === "svg"
+        ? new Blob([svg(args.scene, time, width, height)], {
+            type: "image/svg+xml",
+          })
+        : await frameImage(args.scene, time, width, height);
+    return download(
+      blob,
+      `${args.scene.name || "Frame"}-${Math.round(time)}ms.${args.format}`,
+    );
   }
   if (name === "open_project") {
     const file = await selectedFile(args.path, ".storyboard,.json");
