@@ -1,0 +1,14 @@
+{
+  "name": "storyboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun node_modules/@tauri-apps/cli/tauri.js dev",
+    "build": "bun node_modules/@tauri-apps/cli/tauri.js build --bundles app",
+    "test": "bun test tests && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.0"
+  }
+}
