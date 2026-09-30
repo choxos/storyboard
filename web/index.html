@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Create motion graphics in your browser. Edit scenes and keyframes, add a soundtrack, and export video with Storyboard."
+    />
+    <meta name="theme-color" content="#f5f5f7" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Storyboard | Motion graphics editor</title>
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="web.css" />
+  </head>
+  <body class="browser-app">
+    <div id="app"><p class="loading">Opening Storyboard...</p></div>
+    <dialog id="modal"></dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <noscript
+      >Storyboard needs JavaScript to edit and preview motion
+      graphics.</noscript
+    >
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

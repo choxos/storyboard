@@ -1,0 +1,111 @@
+.browser-app .copy-path {
+  display: none;
+}
+.browser-note {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0 0 10px;
+}
+#assistant-error {
+  color: #a53724;
+  min-height: 1.5em;
+}
+#browser-assistant textarea {
+  width: 100%;
+  resize: vertical;
+}
+@media (max-width: 800px) {
+  body.browser-app {
+    overflow: auto;
+  }
+  .browser-app #app {
+    height: auto;
+    min-height: 100dvh;
+  }
+  .browser-app .topbar {
+    height: auto;
+    min-height: 60px;
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+  .browser-app .topbar .spacer {
+    display: none;
+  }
+  .browser-app .brand {
+    width: auto;
+  }
+  .browser-app .project-name {
+    max-width: 160px;
+  }
+  .browser-app .workspace {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .browser-app .preview-pane {
+    min-height: 380px;
+    height: 55dvh;
+    flex-shrink: 0;
+    padding: 15px 10px;
+  }
+  .browser-app .canvas-well {
+    min-height: 160px;
+  }
+  .browser-app .sidebar {
+    min-height: 460px;
+    height: 65dvh;
+    flex-shrink: 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .browser-app .transport {
+    flex-wrap: wrap;
+  }
+  .browser-app .scrubber {
+    flex-basis: 100%;
+  }
+  .browser-app .audio-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .browser-app .audio-lane {
+    flex-shrink: 0;
+  }
+  .browser-app .audio-note {
+    display: none;
+  }
+  .browser-app .filmstrip {
+    min-height: 155px;
+  }
+  .browser-app .statusbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+  }
+  .browser-app .statusbar > span:last-child {
+    display: none;
+  }
+  .browser-app dialog {
+    max-width: calc(100vw - 20px);
+  }
+  .browser-app .inspector {
+    grid-template-columns: 1fr;
+  }
+  .browser-app .layer-list {
+    display: flex;
+    overflow-x: auto;
+    max-height: 70px;
+  }
+  .browser-app .form-row.three {
+    flex-wrap: wrap;
+  }
+  .browser-app .keyframes input {
+    min-width: 0;
+    width: 100%;
+  }
+  .browser-app.presenting .preview-pane {
+    height: 100dvh;
+  }
+}

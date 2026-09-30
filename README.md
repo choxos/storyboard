@@ -1,10 +1,61 @@
 # Storyboard
 
-A local macOS motion graphics editor, built with Rust and Tauri. Prompt Claude or Codex scene by scene, adjust animation to the millisecond, bring in a soundtrack, and export an MP4.
+A motion graphics editor for the browser and macOS. Build a storyboard, edit vector layers and keyframes, bring in a soundtrack, and export video. Work with Claude or Codex scene by scene, or edit everything by hand.
+
+**[Open the web editor](https://choxos.github.io/storyboard/)** · [Run the macOS app](#macos-app) · [Develop the web version](#web-development)
+
+|                | Browser                                                             | macOS                                                    |
+| -------------- | ------------------------------------------------------------------- | -------------------------------------------------------- |
+| Engine         | TypeScript, SVG, Canvas, Web Audio                                  | Rust, Tauri, resvg, FFmpeg                               |
+| Editing        | Scenes, layers, exact keyframes, 47 canvas presets, undo, revisions | Same editor and project format                           |
+| Claude / Codex | Copy a prepared prompt and paste the JSON response                  | Direct CLI requests with live model and effort lists     |
+| Audio          | Local files decoded by your browser; editable beat estimates        | Local files decoded with FFmpeg; editable beat estimates |
+| Video          | MP4 when supported, otherwise WebM; real-time recording up to 4K    | Frame-exact H.264/AAC MP4, up to 8K canvas limits        |
+| Storage        | Project downloads and IndexedDB recovery                            | Project files and atomic local recovery                  |
+
+No application server, account, or API key is needed for the web editor. Project content and audio stay in your browser until you choose to copy or download them. GitHub Pages serves the static application files.
 
 Inspired by [Caleb Porzio's editor](https://x.com/calebporzio/status/2104945478055989489). This is an independent implementation using the supplied screenshot and walkthrough as workflow references.
 
-## Run
+## Browser workflow
+
+1. Open the example, add scenes, or open a `.storyboard` file from the desktop app.
+2. Use **Layers & timing** to edit text, shapes, and animation. **Canvas** offers 47 common formats and custom dimensions.
+3. For AI edits, choose Claude or Codex, describe the change, and click **Prepare prompt**. Copy the prepared context into your assistant, choose model and effort there, then paste its JSON response back into Storyboard. Invalid responses are rejected before application. Applied edits create a revision and can be undone.
+4. Add a local soundtrack. Review estimated tempo and downbeats in **Beat grid** before snapping cuts or motion.
+5. **Save** downloads an editable project. **Render** records video with progress and cancellation. Keep the tab visible until the download starts.
+
+GitHub Pages cannot launch desktop CLIs. Direct AI calls and live CLI catalogs belong to the macOS app. The browser edition deliberately asks for no API keys.
+
+Browser video format is detected through [`MediaRecorder.isTypeSupported`](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder/isTypeSupported_static). Recording runs in real time, and frame cadence depends on device load. The project frame rate is the requested capture rate, not a frame-exact encoding guarantee. Browser export accepts at most 3840 pixels per side and 8,294,400 total pixels. Larger canvases remain editable; use the desktop app to render them. Codec availability, audio import formats, and fullscreen behavior vary by browser. Desktop Chrome or Edge is recommended for recording; narrow screens support editing in a stacked layout.
+
+Recovery, including imported audio, is stored in IndexedDB for this site and browser profile. Clearing site data removes it. Download project copies regularly. `.storyboard` downloads include timing metadata but do not embed audio; use **Replace** to relink the soundtrack after opening a downloaded project. Browser downloads contain the audio filename instead of a native absolute path.
+
+## Web development
+
+Requires Bun 1.3.14 or newer. No Rust or FFmpeg installation is needed for this build.
+
+```sh
+bun install --frozen-lockfile
+bun run dev:web
+# Open http://127.0.0.1:4173/storyboard/
+```
+
+`dev:web` builds once and serves locally. Rerun `bun run build:web` and reload after edits.
+
+```sh
+bun run test:web
+bun run check:web
+bun run build:web
+```
+
+The build produces `dist/`, with relative URLs for repository subpaths. TypeScript browser modules are checked in strict mode; the existing JavaScript UI is shared with the desktop app. No frontend framework or runtime dependency is required.
+
+### GitHub Pages
+
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) tests and builds the browser edition, uploads `dist/`, and deploys through GitHub Pages on pushes to `main` or manual dispatch. In a fork, choose **Settings → Pages → Build and deployment → Source: GitHub Actions**, then run **Publish browser editor**. See GitHub's [custom workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
+## macOS app
 
 Requires macOS 12+, stable Rust (tested with 1.98.1), Xcode Command Line Tools, and Bun. FFmpeg is needed for audio analysis and MP4 export. Install and sign in to either or both AI CLIs:
 
@@ -27,10 +78,10 @@ open src-tauri/target/release/bundle/macos/Storyboard.app
 
 The bundle is built for the current Mac architecture. It is locally signed, not notarized for distribution. Finder-launched apps find `claude`, `codex`, and `ffmpeg` in PATH, `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin`, or `/usr/local/bin`.
 
-## Edit
+## Shared editing tools
 
-- **Scene / Project:** prompt one scene or generate and revise the entire storyboard. Pick Claude or Codex beside Send, then choose a model from the provider's current catalog or use **CLI default**. Model selection is remembered separately for each provider.
-- **Thinking effort:** choose an explicit model to see the effort levels its CLI reports. Choices are remembered per provider and model. **CLI default** leaves effort unchanged. Higher effort can take longer and use more quota; models without effort support keep their default behavior.
+- **Scene / Project:** prompt one scene or revise the entire storyboard. Browser users exchange JSON through **Prepare prompt**. In the macOS app, pick Claude or Codex beside Send, then choose a live model or **CLI default**.
+- **Thinking effort (macOS):** choose an explicit model to see effort levels reported by its CLI. Choices are remembered per provider and model. **CLI default** leaves effort unchanged. Higher effort can take longer and use more quota; models without effort support keep their default behavior.
 - **Layers & timing:** edit text, shapes, colors, geometry, and keyframe times, values, and easing. Double-click a visible layer to open its inspector. Duration edits proportionally retime existing keyframes.
 - **Versions / Undo:** restore previous scene revisions; undo project changes. Up to 50 saved revisions and 100 chat messages per scene. Project undo holds 30 changes for the current session.
 - **Filmstrip:** add, duplicate, delete, drag to reorder, or use Option+Left/Right to move the selected scene.
@@ -39,7 +90,7 @@ The bundle is built for the current Mac architecture. It is locally signed, not 
 - **Art direction:** set the visual brief, project name, canvas size, and frame rate.
 - **Check seams:** compare outgoing and incoming boundary frames. High pixel differences may be intentional cuts, not errors.
 
-## Live models
+## Live models on macOS
 
 Model choices are requested when the app opens, when the provider changes, and when you click **Refresh models**. Storyboard starts a fresh CLI process and asks Codex's [`model/list`](https://developers.openai.com/codex/app-server/#list-models-modellist) RPC or Claude's [Agent SDK initialization catalog](https://platform.claude.com/docs/en/agent-sdk/typescript). Codex pagination is followed. Claude aliases display their resolved model when provided.
 
@@ -49,11 +100,11 @@ There is no bundled list of model names or fallback catalog. Availability comes 
 
 Drop a local audio file into the window or choose **Add a soundtrack**. WAV, MP3, M4A, AAC, AIFF, and FLAC are supported by the importer; playback depends on macOS WebKit's codec support.
 
-Rust analyzes an onset envelope to estimate tempo and downbeat phase. Strong changes in bar energy suggest section boundaries. These are editable heuristics, not guaranteed musical transcription. Silence and weak rhythms produce low confidence. Use **Beat grid** to correct BPM, beats per bar, downbeat offset, and section markers.
+Both engines analyze an onset envelope to estimate tempo and downbeat phase. Strong changes in bar energy suggest section boundaries. These are editable heuristics, not guaranteed musical transcription. Silence and weak rhythms produce low confidence. Use **Beat grid** to correct BPM, beats per bar, downbeat offset, and section markers.
 
 **Snap cuts** aligns scene ends to estimated downbeats and retimes their animation. **Snap motion** aligns keyframes to the global beat grid, including each scene's start offset. Colliding keyframes merge, keeping the last value. Both operations can be undone. The Snap checkbox also snaps timeline dragging.
 
-## Save and render
+## Save and render on macOS
 
 Command+S saves a `.storyboard` JSON project. Command+Shift+S saves a copy; Command+O opens one. Files include scene data, chat, versions, and audio analysis. Audio is linked by path, not embedded. Keep the original audio available, or use Replace to relink it.
 
@@ -65,11 +116,13 @@ Edits also save a recovery project in macOS Application Support under `dev.story
 
 Scenes contain text, rectangles, ellipses, and SVG paths with tracks for position, size, opacity, rotation, and scale. Text uses Arial. Colors are `#RRGGBB` or `none`. Elements use center coordinates; text uses a centered baseline; paths use local SVG coordinates. The destination keyframe determines interval easing. Frames outside a track hold its first or last value.
 
-AI output is schema constrained and validated before application. It cannot insert executable HTML or JavaScript into the preview. Claude runs with tools, MCP servers, hooks, and session persistence disabled. Codex runs in an ephemeral temporary directory with a read-only sandbox and user configuration disabled.
+Scene data and AI responses are validated before application. They cannot insert executable HTML or JavaScript into the preview. Desktop AI output is schema constrained. Desktop Claude runs with tools, MCP servers, hooks, and session persistence disabled. Desktop Codex runs in an ephemeral temporary directory with a read-only sandbox and user configuration disabled.
 
 This version is a vector motion editor. It does not execute arbitrary generated web apps, import video or image layers, or offer 3D compositing. Limits: 100 scenes, 250 elements per scene, 10-minute projects and audio, 2-minute individual scenes, and 20 MB project files. Canvas dimensions must be even, 64–8192 pixels per side, with at most 35,389,440 pixels total (8192 × 4320, or its portrait equivalent). Frame rates: 24, 30, 60. Large canvases increase rendering time and memory use. Presets use square pixels and are not an exhaustive catalog of every platform's changing requirements.
 
 ## Verify
+
+Browser checks on September 30, 2026: strict TypeScript compilation and five web tests passed. Tests cover native project compatibility, input validation, all five easing modes, scene boundaries, XML escaping, beat estimation, assistant response validation, and all canvas presets. Browser checks covered manual layer edits, scene and project response import, invalid response rejection, prompt preservation on cancel, undo, portrait resize, project downloads, recovery after reload, audio import and recovery, beat calibration, motion snapping, seam comparison, and playback across scene boundaries. Responsive checks used 1440 × 960 and 390 × 844 viewports. A browser-generated 1280 × 720 MP4 decoded successfully with H.264 video and AAC audio; its measured duration was 15.998 seconds for a 16-second project. Canceling export produced no download. A downloaded project passed the Rust validator and reopened in the browser; missing audio blocked export until relinked. All nine Rust tests also passed after the shared UI changes.
 
 Checked on Apple Silicon on September 29, 2026: nine Rust tests and one JavaScript test passed, Clippy passed with warnings denied, and the release bundle passed strict code-signature verification. Real Claude and Codex requests each produced a validated scene edit with an explicit model and low effort. Live CLI catalogs supplied models and their supported effort levels. Native checks covered save/recovery, revisions, undo, exact seeking, audio import and calibration, snapping, playback across scene boundaries, seam comparison, and MP4 export with H.264/AAC. Canvas checks covered portrait, square, custom dimensions, and rejection of odd sizes. Separate exports verified 1080 × 1920 and 1080 × 1080 H.264 frames; an 8192 × 4320 PNG rendered successfully.
 
@@ -97,4 +150,4 @@ src-tauri/target/debug/storyboard --export /tmp/demo.storyboard /tmp/demo.mp4
 
 `--analyze AUDIO` prints audio timing JSON. `--generate claude|codex PROJECT PROMPT OUTPUT [MODEL [EFFORT]]` runs a real provider edit on the first scene and saves the result to OUTPUT. It uses the account's normal quota. Effort reaches Claude through `--effort` and Codex through `model_reasoning_effort`; neither is overridden when **CLI default** is selected.
 
-Source layout: `src-tauri/src/model.rs` defines and validates project data; `render.rs` evaluates keyframes and draws SVG; `audio.rs` estimates timing; `ai.rs` calls providers; `export.rs` renders MP4; `storage.rs` writes projects; `lib.rs` connects native commands. `ui/` contains the WebKit interface without a frontend framework.
+Source layout: `web/` contains the strict TypeScript browser engine, local storage, assistant exchange, export, and static build. `ui/` contains the shared JavaScript interface and canvas presets. `src-tauri/src/model.rs` defines and validates native project data; `render.rs` evaluates keyframes and draws SVG; `audio.rs` estimates timing; `ai.rs` calls providers; `export.rs` renders MP4; `storage.rs` writes projects; `lib.rs` connects native commands.

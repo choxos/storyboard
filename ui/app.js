@@ -1,6 +1,7 @@
 import { canvasSizes, resizeCanvas } from "./canvas.js";
 
-const api = window.__TAURI__;
+const api = window.__TAURI__ || window.storyboardWeb;
+const browser = !!api?.browser;
 const invoke = (name, args = {}) => api.core.invoke(name, args);
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
@@ -115,6 +116,11 @@ function shell() {
     <section class="filmstrip" id="filmstrip" aria-label="Scenes"></section>
     <footer class="statusbar"><span id="save-state"></span><span id="project-stats"></span><span class="spacer"></span><span id="job-status"></span><span>Space to play &nbsp; / &nbsp; Double-click a layer to edit</span></footer>`;
   new ResizeObserver(fitCanvas).observe($(".canvas-well"));
+  if (browser)
+    $(".brand").insertAdjacentHTML(
+      "beforeend",
+      '<small class="muted">Web</small>',
+    );
   $("#scrub").addEventListener("input", (e) =>
     seek(Number(e.target.value), s.snap),
   );
@@ -266,6 +272,14 @@ function sidebar() {
   if (s.tab === "render") {
     $("#sidebar").innerHTML =
       `<div class="render-panel"><h2>Ready for the big screen.</h2><p>Every frame uses the same Rust animation engine as your preview. Export an H.264 MP4 with your soundtrack.</p><dl><dt>Canvas</dt><dd>${s.project.width} × ${s.project.height}</dd><dt>Duration</dt><dd>${seconds(duration())}</dd><dt>Scenes</dt><dd>${s.project.scenes.length}</dd><dt>Audio</dt><dd>${s.project.audio ? esc(s.project.audio.name) : "No soundtrack"}</dd></dl><label>Frame rate<select id="fps">${[24, 30, 60].map((n) => `<option ${n === s.project.fps ? "selected" : ""}>${n}</option>`).join("")}</select></label><button class="primary" data-action="export" ${s.busy ? "disabled" : ""}>Export MP4</button><button data-action="seams" ${s.busy ? "disabled" : ""}>Check scene seams</button><div class="progress"><div id="export-progress"></div></div><p id="export-status">${s.ffmpeg ? "FFmpeg ready. Choose a destination to render." : "Install FFmpeg with brew install ffmpeg, then reopen Storyboard."}</p><button data-action="cancel" class="${s.busy ? "" : "hidden"}">Cancel export</button><p>Projects are saved separately as editable .storyboard files.</p></div>`;
+    if (browser) {
+      $(".render-panel > p").textContent =
+        "Record video in this browser with your soundtrack. Keep this tab visible. Recording runs in real time; busy devices may drop frames. Use the desktop app for frame-exact export.";
+      $('[data-action="export"]').textContent = `Export ${api.videoLabel}`;
+      $("#export-status").textContent = s.ffmpeg
+        ? "Ready. Browser export supports up to 4K; download starts when recording finishes."
+        : "Video recording is unavailable in this browser.";
+    }
     return;
   }
   const chat = s.scope === "scene" ? doc().chat : s.project.chat;
@@ -275,6 +289,11 @@ function sidebar() {
     <div class="chat" id="chat">${chat.length ? chat.map((m) => `<div class="message ${m.role === "user" ? "user" : ""}"><small>${esc(m.role === "user" ? "You" : m.provider)}</small>${esc(m.text)}</div>`).join("") : `<div class="welcome"><div class="spark">${icon("spark")}</div><h2>${s.scope === "scene" ? "A scene starts with a thought." : "Think in scenes."}</h2><p>${s.scope === "scene" ? "Describe what should change. Refine the motion, the words, or one precise moment. Every iteration stays in your history." : "Describe the whole story. Claude or Codex can create, reorder, and refine scenes together."}</p><button class="suggestion" data-prompt="${s.scope === "scene" ? "Hold the headline for 500 ms, then bring the shapes in one at a time." : "Create a 15-second product launch with five scenes, clean typography, and precise transitions."}">${s.scope === "scene" ? "Hold the headline a little longer" : "Create a 15-second product launch"}</button><button class="suggestion" data-prompt="${s.scope === "scene" ? "Make the motion quieter. Use gentle easing and let everything settle by 1800 ms." : "Make every scene flow into the next. Keep the palette and visual rhythm consistent."}">${s.scope === "scene" ? "Give the motion room to breathe" : "Find a consistent visual rhythm"}</button><button class="suggestion" data-action="inspector">${icon("sliders")} Edit layers & exact timing</button></div>`}${s.busy ? '<p class="muted"><span class="busy-indicator"></span>Designing your next frame...</p>' : ""}</div>
     <div class="composer"><div id="model-picker"></div><div class="composer-box"><textarea id="prompt" aria-label="Prompt" placeholder="${s.scope === "scene" ? "What should change? e.g. “Slide the card in at 750 ms.”" : "Describe your video, or ask for changes across every scene."}" ${s.busy ? "disabled" : ""}></textarea><div class="composer-bottom"><select id="provider" aria-label="AI provider" ${s.busy ? "disabled" : ""}><option value="claude" ${s.provider === "claude" ? "selected" : ""}>Claude</option><option value="codex" ${s.provider === "codex" ? "selected" : ""}>Codex</option></select><span class="spacer"></span><button data-action="${s.busy ? "cancel" : "send"}" class="primary">${s.busy ? "Cancel" : "Send"}</button></div></div><div class="composer-hint"><span>⌘↵ to send</span><button class="quiet" data-action="inspector" style="font-size:10px;padding:0">Layers & timing</button><span>Uses your CLI login</span></div></div>`;
   modelPicker();
+  if (browser) {
+    $('[data-action="send"]')?.replaceChildren("Prepare prompt");
+    $(".composer-hint > span:last-child").textContent =
+      "Copy prompt, paste response";
+  }
   const draftKey = s.scope === "project" ? "project" : doc().scene.id;
   $("#prompt").dataset.draftKey = draftKey;
   $("#prompt").value = s.drafts[draftKey] || "";
@@ -284,6 +303,11 @@ function sidebar() {
 function modelPicker() {
   const host = $("#model-picker");
   if (!host) return;
+  if (browser) {
+    host.innerHTML =
+      '<p class="browser-note">Use Claude or Codex in your own app, then paste its JSON response here. Select model and effort there.</p>';
+    return;
+  }
   const catalog = s.catalogs[s.provider] || {};
   const models = catalog.models || [];
   const selected = s.models[s.provider] || "";
@@ -312,6 +336,7 @@ function modelPicker() {
 }
 
 function loadModels(provider = s.provider) {
+  if (browser) return Promise.resolve();
   if (s.closing) return Promise.resolve();
   if (s.modelRequests[provider]) {
     if (provider === s.provider) modelPicker();
@@ -633,8 +658,8 @@ async function send() {
   const prompt = $("#prompt").value.trim();
   if (!prompt || s.busy) return;
   const provider = s.provider;
-  const model = $("#model").value.trim();
-  const effort = $("#effort").value;
+  const model = $("#model")?.value.trim() || "";
+  const effort = $("#effort")?.value || "";
   if (model && !s.catalogs[provider]?.models?.some((m) => m.id === model)) {
     toast("Choose a model from the current list, or use CLI default.", true);
     return;
@@ -827,7 +852,7 @@ async function exportVideo() {
     if (path) {
       if ($("#export-status"))
         $("#export-status").textContent = `Saved to ${path}`;
-      toast(`MP4 exported: ${path}`);
+      toast(`${browser ? "Video download ready" : "MP4 exported"}: ${path}`);
     } else if ($("#export-status"))
       $("#export-status").textContent = "Export canceled.";
   } catch (e) {
@@ -1402,7 +1427,7 @@ function keys(e) {
     $('[data-action="present"]').click();
     return;
   }
-  if ($("#modal").open) return;
+  if (document.querySelector("dialog[open]")) return;
   if (cmd && e.key === "Enter" && $("#prompt")) {
     e.preventDefault();
     send();
@@ -1486,6 +1511,29 @@ async function start() {
       else importAudio(path);
     }
   });
+  if (browser) {
+    window.addEventListener("beforeunload", (event) => {
+      if (s.dirty || s.busy) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        pause();
+        persist();
+      }
+    });
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement && s.presenting) {
+        s.presenting = false;
+        document.body.classList.remove("presenting");
+        $("#exit-present").classList.add("hidden");
+        fitCanvas();
+      }
+    });
+    return;
+  }
   await api.window.getCurrentWindow().onCloseRequested(async (event) => {
     event.preventDefault();
     s.closing = true;
