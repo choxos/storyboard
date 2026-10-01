@@ -2,6 +2,7 @@ import type { Project } from "./model";
 import { drawFrame, sceneAt } from "./render";
 import { decodeAudio } from "./audio";
 import { download } from "./files";
+import { scheduleSounds } from "../ui/sound-playback.js";
 
 export function videoFormat(): { mime: string; extension: string } | null {
   if (
@@ -50,6 +51,8 @@ export async function exportVideo(
     fadeIn: GainNode | undefined,
     fadeOut: GainNode | undefined,
     recorder: MediaRecorder | undefined;
+  let destination: MediaStreamAudioDestinationNode | undefined,
+    stopSounds: (() => void) | undefined;
   const visible = () => {
     if (document.hidden)
       throw new Error(
@@ -58,23 +61,33 @@ export async function exportVideo(
     signal.throwIfAborted();
   };
   try {
-    if (audio) {
-      const buffer = await decodeAudio(audio);
+    if (audio || project.scenes.some((d) => d.scene.sounds?.length)) {
+      const buffer = audio ? await decodeAudio(audio) : null;
       signal.throwIfAborted();
       audioContext = new AudioContext();
       await audioContext.resume();
-      const destination = audioContext.createMediaStreamDestination();
-      source = audioContext.createBufferSource();
-      source.buffer = buffer;
-      fadeIn = audioContext.createGain();
-      fadeOut = audioContext.createGain();
-      source.connect(fadeIn).connect(fadeOut).connect(destination);
+      destination = audioContext.createMediaStreamDestination();
+      if (buffer) {
+        source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        fadeIn = audioContext.createGain();
+        fadeOut = audioContext.createGain();
+        source.connect(fadeIn).connect(fadeOut).connect(destination);
+      }
       for (const track of destination.stream.getAudioTracks())
         stream.addTrack(track);
     }
     const total = project.scenes.reduce((n, d) => n + d.scene.duration_ms, 0);
     const [first] = sceneAt(project, 0);
-    await drawFrame(ctx, first, 0, project.width, project.height);
+    await drawFrame(
+      ctx,
+      first,
+      0,
+      project.width,
+      project.height,
+      false,
+      project.images,
+    );
     visible();
     recorder = new MediaRecorder(stream, {
       mimeType: format.mime,
@@ -97,12 +110,21 @@ export async function exportVideo(
       };
     });
     recorder.start(1000);
-    let audioStart = 0;
+    const audioStart = audioContext?.currentTime ?? 0;
+    if (audioContext && destination)
+      stopSounds = scheduleSounds(audioContext, destination, project, {
+        from: 0,
+        to: total,
+        at: audioStart,
+      });
     if (source && audioContext && fadeIn && fadeOut && project.audio) {
-      audioStart = audioContext.currentTime;
       const start = audioStart,
         mix = project.audio.mix;
-      const end = Math.min(total, project.audio.duration_ms) / 1000;
+      const end =
+        Math.min(
+          total,
+          project.audio.duration_ms - (project.audio.start_ms || 0),
+        ) / 1000;
       const volume = mix?.muted ? 0 : (mix?.volume ?? 1);
       const fadeInTime = Math.min((mix?.fade_in_ms ?? 0) / 1000, end);
       const fadeOutTime = Math.min((mix?.fade_out_ms ?? 0) / 1000, end);
@@ -114,7 +136,7 @@ export async function exportVideo(
         fadeOut.gain.setValueAtTime(1, start + end - fadeOutTime);
         fadeOut.gain.linearRampToValueAtTime(0, start + end);
       }
-      source.start(start);
+      source.start(start, (project.audio.start_ms || 0) / 1000);
     }
     const start = performance.now();
     try {
@@ -127,7 +149,15 @@ export async function exportVideo(
           : tick - start;
         if (elapsed >= total) break;
         const [scene, local] = sceneAt(project, elapsed);
-        await drawFrame(ctx, scene, local, project.width, project.height);
+        await drawFrame(
+          ctx,
+          scene,
+          local,
+          project.width,
+          project.height,
+          false,
+          project.images,
+        );
         progress(elapsed / total);
         await new Promise((resolve) =>
           setTimeout(
@@ -152,6 +182,7 @@ export async function exportVideo(
   } finally {
     if (recorder && recorder.state !== "inactive") recorder.stop();
     source?.stop();
+    stopSounds?.();
     stream.getTracks().forEach((track) => track.stop());
     await audioContext?.close();
   }

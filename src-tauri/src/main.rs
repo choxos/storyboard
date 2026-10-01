@@ -26,7 +26,7 @@ fn cli(args: &[String]) -> Result<(), String> {
                 return Err("Time must be a finite nonnegative number.".into());
             }
             let (scene, local) = p.scene_at(time);
-            let svg = storyboard::render::svg(scene, local, p.width, p.height);
+            let svg = storyboard::render::svg(scene, local, p.width, p.height, &p.images);
             storyboard::render::raster(
                 &svg,
                 p.width,
@@ -51,11 +51,15 @@ fn cli(args: &[String]) -> Result<(), String> {
             let mut p = storyboard::storage::read(Path::new(&args[3]))?;
             let reply = storyboard::ai::generate(
                 &p,
-                Some(0),
-                &args[2],
-                args.get(6).map(String::as_str).unwrap_or(""),
-                args.get(7).map(String::as_str).unwrap_or(""),
-                &args[4],
+                &storyboard::ai::Request {
+                    scene_index: Some(0),
+                    provider: args[2].clone(),
+                    model: args.get(6).cloned().unwrap_or_default(),
+                    effort: args.get(7).cloned().unwrap_or_default(),
+                    prompt: args[4].clone(),
+                    playhead_ms: 0.0,
+                    review_frames: true,
+                },
                 &AtomicBool::new(false),
             )?;
             p.scenes[0].scene = reply.scenes[0].clone();

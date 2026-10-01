@@ -1,6 +1,6 @@
 # Storyboard
 
-A motion graphics editor for the browser and macOS. Build a storyboard, edit vector layers and keyframes, bring in a soundtrack, and export video. Work with Claude or Codex scene by scene, or edit everything by hand.
+A motion graphics editor for the browser and macOS. Build a storyboard, edit text, images, vector layers, and keyframes, add music and timed sound effects, and export video. Work with Claude or Codex scene by scene, or edit everything by hand.
 
 **[Open the web editor](https://choxos.github.io/storyboard/)** · [Run the macOS app](#macos-app) · [Develop the web version](#web-development)
 
@@ -21,16 +21,16 @@ Inspired by [Caleb Porzio's editor](https://x.com/calebporzio/status/21049454780
 ## Browser workflow
 
 1. Choose **New project**, pick a canvas and an editable scene template, or open a `.storyboard` file from the desktop app. **Add scene** offers the same layouts without replacing your project.
-2. Double-click text to change its words, size, weight, and color. Drag layers or use **Align to canvas** to place them. Use **Layers & timing** for shapes, stacking order, motion presets, and exact animation. **Canvas** offers 47 common formats and custom dimensions.
-3. For AI edits, choose Claude or Codex, describe the change, and click **Prepare prompt**. Copy the prepared context into your assistant, choose model and effort there, then paste its JSON response back into Storyboard. Invalid responses are rejected before application. Applied edits create a revision and can be undone.
-4. Add a local soundtrack. Set its **Volume**, mute, and fades, then review estimated tempo and downbeats in **Beat grid** before snapping cuts or motion.
+2. Double-click text to change its words, font, size, weight, and color. Use **Image / logo** to import PNG, JPEG, or WebP. Drag layers or use **Align to canvas** to place them. Use **Layers & timing** for shapes, stacking order, motion presets, and exact animation. **Canvas** offers 47 common formats and custom dimensions.
+3. For AI edits, choose Claude or Codex, describe the change, and click **Prepare prompt**. Context includes the current playhead and available assets. With **Include rendered frame review** enabled, download the sample sheet and attach it with the prompt. Paste the JSON response, then **Preview response & prepare review** to see candidate frames and prepare another visual review. Apply when satisfied. Invalid responses are rejected, and applied edits create a revision and can be undone.
+4. Add a local soundtrack. Set its start position, **Volume**, mute, and fades, then review estimated tempo and downbeats in **Beat grid** before snapping cuts or motion. **Sound effects** adds presets or imported clips at the playhead, with editable timing, trim, volume, and pitch.
 5. **Save** downloads an editable project. **Render** records video with progress and cancellation, or saves the current frame as PNG or SVG. Keep the tab visible while recording video.
 
 GitHub Pages cannot launch desktop CLIs. Direct AI calls and live CLI catalogs belong to the macOS app. The browser edition deliberately asks for no API keys.
 
 Browser video format is detected through [`MediaRecorder.isTypeSupported`](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder/isTypeSupported_static). Recording runs in real time, and frame cadence depends on device load. The project frame rate is the requested capture rate, not a frame-exact encoding guarantee. Browser export accepts at most 3840 pixels per side and 8,294,400 total pixels. Larger canvases remain editable; use the desktop app to render them. Codec availability, audio import formats, and fullscreen behavior vary by browser. Desktop Chrome or Edge is recommended for recording; narrow screens support editing in a stacked layout.
 
-Recovery, including imported audio, is stored in IndexedDB for this site and browser profile. Clearing site data removes it. Download project copies regularly. `.storyboard` downloads include timing metadata but do not embed audio; use **Replace** to relink the soundtrack after opening a downloaded project. Browser downloads contain the audio filename instead of a native absolute path.
+Recovery, including imported audio, is stored in IndexedDB for this site and browser profile. Clearing site data removes it. Download project copies regularly. `.storyboard` downloads embed images and short sound effects. The full soundtrack remains linked; use **Replace** to relink it after opening a downloaded project. Browser downloads contain the soundtrack filename instead of a native absolute path.
 
 ## Web development
 
@@ -68,7 +68,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-The editor, manual layer tools, project files, and preview work without an AI login. AI requests use your CLI account and its usage limits. Storyboard does not collect or store API keys. The selected scene or project, recent conversation, art direction, and audio timing metadata are sent to the selected provider. Audio samples are not uploaded.
+The editor, manual layer tools, project files, and preview work without an AI login. AI requests use your CLI account and its usage limits. Storyboard does not collect or store API keys. The selected scene or project, recent conversation, art direction, playhead, asset names, and audio timing metadata are sent to the selected provider. **Review rendered frames** also sends rendered images, including visible imported images, and uses two AI requests: an edit followed by visual review of the candidate. Disable it for a text-only single request. Audio samples are not uploaded.
 
 Build an application bundle:
 
@@ -82,10 +82,12 @@ The bundle is built for the current Mac architecture. It is locally signed, not 
 ## Shared editing tools
 
 - **Scene templates:** opening title, announcement, quote, big number, three steps, and call to action, plus a blank scene. Pick an accent color and preview each layout. Templates adapt to landscape, square, and portrait canvases, use editable vector layers, and include starter motion. Canceling leaves the current project intact; adding a scene can be undone.
-- **Quick text editing:** double-click visible text or select a text layer and choose **Edit text**. Change words, line breaks, font size, weight, and color while keeping position and animation. Changes create a saved revision and one undo step.
+- **Quick text editing:** double-click visible text or select a text layer and choose **Edit text**. Change words, line breaks, font family, size, weight, and color while keeping position and animation. Choose Arial, Georgia, Times New Roman, Courier New, Verdana, or Trebuchet MS. Fonts use the system installation; unavailable fonts may fall back. Changes create a saved revision and one undo step.
+- **Images and logos:** import PNG, JPEG, or WebP through **Image / logo**, or reuse an existing project image. Imports normalize to embedded PNG, preserve transparency, and fit within 2048 pixels per side. Image layers support the same transforms and motion tracks as shapes. Images stay in the project for saved revisions even after a layer is removed.
+- **Rendered frame review:** native Claude and Codex receive beginning, playhead, and final-frame samples of the chosen scope, then inspect candidate samples before returning the final edit. Repeated sample times merge. The browser prepares downloadable labeled sheets and review prompts for manual exchange. This checks sampled visuals, not every frame or audio quality.
 - **Scene / Project:** prompt one scene or revise the entire storyboard. Browser users exchange JSON through **Prepare prompt**. In the macOS app, pick Claude or Codex beside Send, then choose a live model or **CLI default**.
 - **Thinking effort (macOS):** choose an explicit model to see effort levels reported by its CLI. Choices are remembered per provider and model. **CLI default** leaves effort unchanged. Higher effort can take longer and use more quota; models without effort support keep their default behavior.
-- **Layers & timing:** edit text, shapes, colors, geometry, and keyframe times, values, and easing. **Edit layer** opens the selected layer's inspector; double-clicking a shape also opens it. Duration edits proportionally retime existing keyframes.
+- **Layers & timing:** edit text, images, shapes, colors, geometry, and keyframe times, values, and easing. **Edit layer** opens the selected layer's inspector; double-clicking a shape also opens it. Duration edits proportionally retime existing keyframes and sound cue start times.
 - **Canvas editing:** click a layer to select it, then drag it to move. Arrow keys nudge by 1 pixel; Shift+Arrow nudges by 10. Shift constrains a drag to one axis. Escape cancels a drag or deselects. Moves shift the entire position animation and create one undo step per drag. The **Layer** selector reaches overlapping and transparent layers.
 - **Alignment:** center a selected layer horizontally, vertically, or both, or align to a 5% left, right, top, or bottom canvas margin. Alignment uses its visible bounds at the current playhead, including transforms and multiline text, and moves the entire position animation together.
 - **Layer order:** duplicate the selected layer with its motion and a 24-pixel offset. **Send backward** and **Bring forward** change stacking order. Later layers draw in front.
@@ -108,7 +110,9 @@ There is no bundled list of model names or fallback catalog. Availability comes 
 
 Drop a local audio file into the window or choose **Add a soundtrack**. WAV, MP3, M4A, AAC, AIFF, and FLAC are supported by the importer; playback depends on macOS WebKit's codec support.
 
-**Volume** opens soundtrack level (0–100%), mute, fade in, and fade out controls. Preview and video export use the same linear fade rules. Fade in starts at the beginning of the video; fade out ends at the earlier of the soundtrack or video end. Long fades shorten to fit, and overlapping fades multiply. **Reset mix** resets the dialog; **Apply mix** saves it. Mix changes support undo, recovery, and project saves. Older projects open at full volume with no fades.
+**Volume** opens soundtrack start position, level (0–100%), mute, fade in, and fade out controls. **Start in track** skips the beginning of the source file and shifts waveform, beat markers, playback, and export together. Beat-grid offsets and section boundaries remain in source-file time. Preview and video export use the same linear fade rules. Fade in starts at the beginning of the video; fade out ends at the earlier of the remaining soundtrack or video end. Long fades shorten to fit, and overlapping fades multiply. **Reset mix** resets the dialog; **Apply mix** saves it. Mix changes support undo, recovery, and project saves. Older projects open from the start, at full volume with no fades.
+
+**Sound effects** offers Click, Pop, Ding, Whoosh, Impact, and Riser presets, plus imported clips up to 15 seconds. Imports normalize to embedded 24 kHz PCM WAV, preserving up to two channels. Add cues at the scene playhead, then edit their scene-relative start, source trim, maximum duration, level, and pitch from -12 to +12 semitones. Pitch changes playback speed and available duration. A cue ends at the shorter of its duration limit or remaining source; tails can cross cuts and end at the video boundary. Cues move with their scene, have visible timeline markers, and support undo and revisions. Muting the soundtrack leaves effects audible. Overlapping sounds add together, so lower levels if the mix clips.
 
 Both engines analyze an onset envelope to estimate tempo and downbeat phase. Strong changes in bar energy suggest section boundaries. These are editable heuristics, not guaranteed musical transcription. Silence and weak rhythms produce low confidence. Use **Beat grid** to correct BPM, beats per bar, downbeat offset, and section markers.
 
@@ -116,7 +120,7 @@ Both engines analyze an onset envelope to estimate tempo and downbeat phase. Str
 
 ## Save and render on macOS
 
-Command+S saves a `.storyboard` JSON project. Command+Shift+S saves a copy; Command+O opens one. Files include scene data, chat, versions, and audio analysis. Audio is linked by path, not embedded. Keep the original audio available, or use Replace to relink it.
+Command+S saves a `.storyboard` JSON project. Command+Shift+S saves a copy; Command+O opens one. Files include scene data, chat, versions, audio analysis, embedded images, and embedded sound effects. The soundtrack is linked by path. Keep the original soundtrack available, or use Replace to relink it.
 
 Edits also save a recovery project in macOS Application Support under `dev.storyboard.studio`. Reopening restores it. Explicit project saves and recovery writes use atomic file replacement. Invalid data is rejected before replacement.
 
@@ -124,13 +128,19 @@ Edits also save a recovery project in macOS Application Support under `dev.story
 
 ## Scene format and limits
 
-Scenes contain text, rectangles, ellipses, and SVG paths with tracks for position, size, opacity, rotation, and scale. Text uses Arial. Colors are `#RRGGBB` or `none`. Elements use center coordinates; text uses a centered baseline; paths use local SVG coordinates. The destination keyframe determines interval easing. Frames outside a track hold its first or last value.
+Scenes contain text, images, rectangles, ellipses, and SVG paths with tracks for position, size, opacity, rotation, and scale. Text defaults to Arial. Colors are `#RRGGBB` or `none`. Elements use center coordinates; text uses a centered baseline; paths use local SVG coordinates. The destination keyframe determines interval easing. Frames outside a track hold its first or last value.
 
 Scene data and AI responses are validated before application. They cannot insert executable HTML or JavaScript into the preview. Desktop AI output is schema constrained. Desktop Claude runs with tools, MCP servers, hooks, and session persistence disabled. Desktop Codex runs in an ephemeral temporary directory with a read-only sandbox and user configuration disabled.
 
-This version is a vector motion editor. It does not execute arbitrary generated web apps, import video or image layers, or offer 3D compositing. Limits: 100 scenes, 250 elements per scene, 10-minute projects and audio, 2-minute individual scenes, and 20 MB project files. Canvas dimensions must be even, 64–8192 pixels per side, with at most 35,389,440 pixels total (8192 × 4320, or its portrait equivalent). Frame rates: 24, 30, 60. Large canvases increase rendering time and memory use. Presets use square pixels and are not an exhaustive catalog of every platform's changing requirements.
+This version does not execute arbitrary generated web apps, import video, synthesize music with AI, load custom font files, or offer 3D compositing. Limits: 100 scenes, 250 elements per scene, 10-minute projects and soundtracks, 2-minute individual scenes, and 20 MB project files. Embedded media shares a 12 MB encoded-data budget, with up to 40 images and 40 sound clips. Each image supports up to 4 million pixels and 4096 pixels per side; the importer produces at most 2048 per side. Effects support 64 cues per scene and 200 per project. Canvas dimensions must be even, 64–8192 pixels per side, with at most 35,389,440 pixels total (8192 × 4320, or its portrait equivalent). Frame rates: 24, 30, 60. Large canvases increase rendering time and memory use. Presets use square pixels and are not an exhaustive catalog of every platform's changing requirements.
 
 ## Verify
+
+Media and visual-review checks on September 30, 2026: thirteen web tests and thirteen Rust tests passed, with strict TypeScript compilation, Clippy with warnings denied, and formatting checks. Browser checks covered image import and reuse, font changes, sound imports and cue editing, undo, soundtrack offsets, project downloads, and the two-stage visual review exchange, including invalid-response rejection and cancellation. Native UI checks covered image import, Georgia text, sound import, cue trim/length/volume/pitch, soundtrack start position, and recovery after restart. Desktop and 390 × 844 browser layouts were inspected. Corrupt embedded images were rejected without replacing the current project.
+
+Decoded browser and native exports verified an 880 Hz soundtrack after skipping the first second of a test clip, a 1760 Hz effect after a +12-semitone shift, half-volume cue output, and silence outside the intended ranges. A native export of the UI's recovered project was exactly 16 seconds, with the effect starting at 1.2 seconds. The browser recordings differed from their nominal two-second duration by up to 0.248 seconds under test load. Browser project downloads containing images and sounds passed the Rust validator. The release bundle passed strict code-signature verification.
+
+Real Claude and Codex headless requests each identified the color of an embedded image from rendered pixels, edited the scene, and completed a second rendered-frame review. The desktop UI's Codex request stalled during CLI startup before connecting, both from Finder and after a terminal launch; cancellation preserved the project and prompt. A process sample showed a blocked filesystem directory read, but its underlying cause is unresolved. Native UI AI completion is therefore unverified for this change; headless provider checks and the browser's manual review flow passed.
 
 Creator workflow checks on September 30, 2026: ten web tests and eleven Rust tests passed, along with strict TypeScript compilation and Clippy with warnings denied. Browser checks exercised all six templates plus blank, portrait sizing, custom accent, multiline text without changing motion, all seven alignment actions at an animated frame, and undo/cancel. Native UI checks covered template creation and cancellation, physical double-click text editing, centering, soundtrack import, volume/fade settings, mute, and playback. Desktop and 390 × 844 browser layouts were inspected.
 
@@ -164,6 +174,6 @@ src-tauri/target/debug/storyboard --render /tmp/demo.storyboard 1500 /tmp/frame.
 src-tauri/target/debug/storyboard --export /tmp/demo.storyboard /tmp/demo.mp4
 ```
 
-`--analyze AUDIO` prints audio timing JSON. `--generate claude|codex PROJECT PROMPT OUTPUT [MODEL [EFFORT]]` runs a real provider edit on the first scene and saves the result to OUTPUT. It uses the account's normal quota. Effort reaches Claude through `--effort` and Codex through `model_reasoning_effort`; neither is overridden when **CLI default** is selected.
+`--analyze AUDIO` prints audio timing JSON. `--generate claude|codex PROJECT PROMPT OUTPUT [MODEL [EFFORT]]` runs a real provider edit on the first scene, reviews rendered samples in a second request, and saves the result to OUTPUT. Its playhead context is zero. It uses the account's normal quota. Effort reaches Claude through `--effort` and Codex through `model_reasoning_effort`; neither is overridden when **CLI default** is selected.
 
 Source layout: `web/` contains the strict TypeScript browser engine, local storage, assistant exchange, export, and static build. `ui/` contains the shared JavaScript interface, canvas presets, and motion editing helpers. `src-tauri/src/model.rs` defines and validates native project data; `render.rs` evaluates keyframes and draws SVG; `audio.rs` estimates timing; `ai.rs` calls providers; `export.rs` renders MP4, PNG, and SVG; `storage.rs` writes projects; `lib.rs` connects native commands.

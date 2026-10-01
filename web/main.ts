@@ -3,9 +3,11 @@ import {
   validateProject,
   validateScene,
   validateCanvas,
+  validateImages,
+  validateImageReferences,
   type Project,
 } from "./model";
-import { svg, checkSeams, frameImage } from "./render";
+import { svg, checkSeams, frameImage, validateImageData } from "./render";
 import { analyzeAudio } from "./audio";
 import { stored, storeFile, download, pickFile } from "./files";
 import { exportVideo, videoFormat } from "./export";
@@ -58,6 +60,7 @@ async function invoke(
       const saved = await stored("recovery");
       if (saved !== undefined) {
         validateProject(saved);
+        await validateImageData(saved.images ?? []);
         project = saved;
         recovered = true;
       }
@@ -81,20 +84,25 @@ async function invoke(
   if (name === "cancel_model_discovery") return;
   if (name === "render_frame" || name === "export_frame") {
     validateScene(args.scene);
+    const images = args.images ?? [];
+    validateImages(images);
+    await validateImageData(images);
+    validateImageReferences(args.scene, images);
     const width = Number(args.width),
       height = Number(args.height),
       time = Number(args.timeMs);
     validateCanvas(width, height);
     if (!Number.isFinite(time)) throw new Error("Invalid frame time.");
-    if (name === "render_frame") return svg(args.scene, time, width, height);
+    if (name === "render_frame")
+      return svg(args.scene, time, width, height, images);
     if (args.format !== "png" && args.format !== "svg")
       throw new Error("Choose PNG or SVG.");
     const blob =
       args.format === "svg"
-        ? new Blob([svg(args.scene, time, width, height)], {
+        ? new Blob([svg(args.scene, time, width, height, images)], {
             type: "image/svg+xml",
           })
-        : await frameImage(args.scene, time, width, height);
+        : await frameImage(args.scene, time, width, height, images);
     return download(
       blob,
       `${args.scene.name || "Frame"}-${Math.round(time)}ms.${args.format}`,
@@ -106,6 +114,7 @@ async function invoke(
     if (file.size > 20000000)
       throw new Error("Project files are limited to 20 MB.");
     const project = parseProject(await file.text());
+    await validateImageData(project.images ?? []);
     return { project, path: file.name, warning: await prepareAudio(project) };
   }
   if (name === "import_audio") {
@@ -126,6 +135,7 @@ async function invoke(
   }
   validateProject(args.project);
   const project = args.project;
+  await validateImageData(project.images ?? []);
   switch (name) {
     case "validate_project":
       return;
@@ -145,7 +155,22 @@ async function invoke(
       return checkSeams(project);
     case "generate": {
       controller = new AbortController();
-      const index = args.sceneIndex === null ? null : Number(args.sceneIndex);
+      if (!args.request || typeof args.request !== "object")
+        throw new Error("Invalid assistant request.");
+      const request = args.request as Record<string, unknown>;
+      if (
+        typeof request.prompt !== "string" ||
+        !["claude", "codex"].includes(String(request.provider)) ||
+        typeof request.playhead_ms !== "number" ||
+        !Number.isFinite(request.playhead_ms) ||
+        request.playhead_ms < 0 ||
+        request.playhead_ms >
+          project.scenes.reduce((n, d) => n + d.scene.duration_ms, 0) ||
+        typeof request.review_frames !== "boolean"
+      )
+        throw new Error("Invalid assistant request.");
+      const index =
+        request.scene_index === null ? null : Number(request.scene_index);
       if (
         index !== null &&
         (!Number.isInteger(index) || !project.scenes[index])
@@ -154,9 +179,13 @@ async function invoke(
       return assistant(
         project,
         index,
-        String(args.prompt),
-        String(args.provider),
+        request.prompt,
+        String(request.provider),
         controller.signal,
+        {
+          playheadMs: request.playhead_ms,
+          reviewFrames: request.review_frames,
+        },
       );
     }
     case "export_video": {

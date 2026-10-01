@@ -62,7 +62,13 @@ pub fn escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-pub fn svg(scene: &Scene, time_ms: f64, width: u32, height: u32) -> String {
+pub fn svg(
+    scene: &Scene,
+    time_ms: f64,
+    width: u32,
+    height: u32,
+    images: &[crate::media::ImageAsset],
+) -> String {
     let mut s = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}"><rect width="100%" height="100%" fill="{}"/>"#,
         escape(&scene.background)
@@ -84,6 +90,19 @@ pub fn svg(scene: &Scene, time_ms: f64, width: u32, height: u32) -> String {
             e.stroke_width
         );
         match e.kind {
+            Kind::Image => {
+                if let Some(image) = images.iter().find(|a| a.id == e.image_id) {
+                    let _ = write!(
+                        s,
+                        r#"<image x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="xMidYMid meet" href="{}"/>"#,
+                        -e.width / 2.0,
+                        -e.height / 2.0,
+                        e.width,
+                        e.height,
+                        escape(&image.data)
+                    );
+                }
+            }
             Kind::Rect => {
                 let _ = write!(
                     s,
@@ -109,8 +128,10 @@ pub fn svg(scene: &Scene, time_ms: f64, width: u32, height: u32) -> String {
             Kind::Text => {
                 let _ = write!(
                     s,
-                    r#"<text text-anchor="middle" font-family="Arial" font-size="{}" font-weight="{}">"#,
-                    e.font_size, e.font_weight
+                    r#"<text text-anchor="middle" font-family="{}" font-size="{}" font-weight="{}">"#,
+                    escape(&e.font_family),
+                    e.font_size,
+                    e.font_weight
                 );
                 for (i, line) in e.text.lines().enumerate() {
                     let _ = write!(
@@ -167,7 +188,7 @@ mod tests {
         assert_eq!(sample(&t, 1000.0), 100.0);
         let mut p = crate::model::demo_project();
         p.scenes[0].scene.elements[0].text = "<script> & \"hello\"".into();
-        let xml = svg(&p.scenes[0].scene, 1000.0, 1280, 720);
+        let xml = svg(&p.scenes[0].scene, 1000.0, 1280, 720, &p.images);
         assert!(!xml.contains("<script>"));
         assert!(xml.contains("&lt;script&gt;"));
         let pixels = raster(&xml, 320, 180, &options(), true).unwrap();

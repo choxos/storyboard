@@ -120,6 +120,7 @@ pub fn analyze_samples(samples: &[f32], sample_rate: usize) -> AudioTrack {
         offset_ms,
         beats_per_bar: 4,
         sections,
+        start_ms: 0,
         mix: Default::default(),
         confidence: if total > 0.0 {
             (best.1 / total).clamp(0.0, 1.0)
@@ -136,7 +137,8 @@ pub fn snap(time: f64, a: &AudioTrack, downbeats: bool) -> f64 {
         } else {
             1.0
         };
-    (a.offset_ms + ((time - a.offset_ms) / interval).round() * interval).max(0.0)
+    let offset = a.offset_ms - f64::from(a.start_ms);
+    (offset + ((time - offset) / interval).round() * interval).max(0.0)
 }
 
 #[cfg(test)]

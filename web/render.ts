@@ -1,4 +1,24 @@
-import type { Project, Scene, Track } from "./model";
+import type { Project, Scene, Track, ImageAsset } from "./model";
+
+let decodedImages = new Set<string>();
+export async function validateImageData(images: ImageAsset[]) {
+  for (const asset of images) {
+    if (decodedImages.has(asset.data)) continue;
+    const image = new Image();
+    image.src = asset.data;
+    try {
+      await image.decode();
+    } catch {
+      throw new Error(`Cannot decode image: ${asset.name}`);
+    }
+    if (
+      image.naturalWidth !== asset.width ||
+      image.naturalHeight !== asset.height
+    )
+      throw new Error("Image dimensions do not match its decoded pixels.");
+  }
+  decodedImages = new Set(images.map((asset) => asset.data));
+}
 
 export function sample(track: Track, time: number): number {
   const keys = track.keyframes;
@@ -46,27 +66,33 @@ export function svg(
   time: number,
   width: number,
   height: number,
+  images: ImageAsset[] = [],
 ): string {
   const elements = scene.elements
     .map((element) => {
       const e = { ...element };
       for (const t of element.tracks) e[t.property] = sample(t, time);
+      const image = images.find((a) => a.id === e.image_id);
       const shape =
-        e.kind === "rect"
-          ? `<rect x="${-e.width / 2}" y="${-e.height / 2}" width="${e.width}" height="${e.height}" rx="${e.radius}"/>`
-          : e.kind === "ellipse"
-            ? `<ellipse rx="${e.width / 2}" ry="${e.height / 2}"/>`
-            : e.kind === "path"
-              ? `<path d="${escape(e.path)}"/>`
-              : `<text text-anchor="middle" font-family="Arial" font-size="${e.font_size}" font-weight="${e.font_weight}">${e.text
-                  .replace(/\r\n/g, "\n")
-                  .replace(/\n$/, "")
-                  .split("\n")
-                  .map(
-                    (line, i) =>
-                      `<tspan x="0" dy="${i ? e.font_size * 1.2 : 0}">${escape(line)}</tspan>`,
-                  )
-                  .join("")}</text>`;
+        e.kind === "image"
+          ? image
+            ? `<image x="${-e.width / 2}" y="${-e.height / 2}" width="${e.width}" height="${e.height}" preserveAspectRatio="xMidYMid meet" href="${escape(image.data)}"/>`
+            : ""
+          : e.kind === "rect"
+            ? `<rect x="${-e.width / 2}" y="${-e.height / 2}" width="${e.width}" height="${e.height}" rx="${e.radius}"/>`
+            : e.kind === "ellipse"
+              ? `<ellipse rx="${e.width / 2}" ry="${e.height / 2}"/>`
+              : e.kind === "path"
+                ? `<path d="${escape(e.path)}"/>`
+                : `<text text-anchor="middle" font-family="${escape(e.font_family || "Arial")}" font-size="${e.font_size}" font-weight="${e.font_weight}">${e.text
+                    .replace(/\r\n/g, "\n")
+                    .replace(/\n$/, "")
+                    .split("\n")
+                    .map(
+                      (line, i) =>
+                        `<tspan x="0" dy="${i ? e.font_size * 1.2 : 0}">${escape(line)}</tspan>`,
+                    )
+                    .join("")}</text>`;
       return `<g data-element="${escape(e.id)}" transform="translate(${e.x} ${e.y}) rotate(${e.rotation}) scale(${e.scale_x} ${e.scale_y})" opacity="${e.opacity}" fill="${escape(e.fill)}" stroke="${escape(e.stroke)}" stroke-width="${e.stroke_width}">${shape}</g>`;
     })
     .join("");
@@ -89,9 +115,12 @@ export async function drawFrame(
   width: number,
   height: number,
   transparent = false,
+  images: ImageAsset[] = [],
 ) {
   const url = URL.createObjectURL(
-    new Blob([svg(scene, time, width, height)], { type: "image/svg+xml" }),
+    new Blob([svg(scene, time, width, height, images)], {
+      type: "image/svg+xml",
+    }),
   );
   try {
     const image = new Image();
@@ -121,9 +150,25 @@ export async function checkSeams(project: Project): Promise<number[]> {
   for (let i = 1; i < project.scenes.length; i++) {
     const a = project.scenes[i - 1].scene,
       b = project.scenes[i].scene;
-    await drawFrame(ctx, a, a.duration_ms, project.width, project.height);
+    await drawFrame(
+      ctx,
+      a,
+      a.duration_ms,
+      project.width,
+      project.height,
+      false,
+      project.images,
+    );
     const before = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    await drawFrame(ctx, b, 0, project.width, project.height);
+    await drawFrame(
+      ctx,
+      b,
+      0,
+      project.width,
+      project.height,
+      false,
+      project.images,
+    );
     const after = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let changed = 0;
     for (let j = 0; j < before.length; j += 4)
@@ -139,13 +184,14 @@ export async function frameImage(
   time: number,
   width: number,
   height: number,
+  images: ImageAsset[] = [],
 ): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas is unavailable.");
-  await drawFrame(context, scene, time, width, height, true);
+  await drawFrame(context, scene, time, width, height, true, images);
   return new Promise((resolve, reject) =>
     canvas.toBlob(
       (blob) =>

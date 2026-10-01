@@ -84,17 +84,26 @@ fn still_exports_match_canvas_and_preserve_files_on_invalid_input() {
     let project = model::demo_project();
     let scene = &project.scenes[0].scene;
     let path = dir.path().join("frame.png");
-    export::frame(scene, 1200.0, 320, 240, "png", &path).unwrap();
+    export::frame(scene, 1200.0, 320, 240, "png", &path, &project.images).unwrap();
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 320);
     assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 240);
-    assert!(export::frame(scene, f64::NAN, 320, 240, "png", &path).is_err());
+    assert!(export::frame(scene, f64::NAN, 320, 240, "png", &path, &project.images).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     let mut transparent = scene.clone();
     transparent.background = "none".into();
     transparent.elements.clear();
-    export::frame(&transparent, 1200.0, 320, 240, "png", &path).unwrap();
+    export::frame(
+        &transparent,
+        1200.0,
+        320,
+        240,
+        "png",
+        &path,
+        &project.images,
+    )
+    .unwrap();
     let decoded = Command::new(process::program("ffmpeg").unwrap())
         .args(["-v", "error", "-i"])
         .arg(&path)
@@ -112,10 +121,10 @@ fn still_exports_match_canvas_and_preserve_files_on_invalid_input() {
             .all(|pixel| pixel[3] == 0)
     );
     let svg = dir.path().join("frame.svg");
-    export::frame(scene, 1200.0, 320, 240, "svg", &svg).unwrap();
+    export::frame(scene, 1200.0, 320, 240, "svg", &svg, &project.images).unwrap();
     assert_eq!(
         std::fs::read_to_string(svg).unwrap(),
-        storyboard::render::svg(scene, 1200.0, 320, 240)
+        storyboard::render::svg(scene, 1200.0, 320, 240, &project.images)
     );
 }
 

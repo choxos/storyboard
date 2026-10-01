@@ -27,6 +27,10 @@ pub struct Project {
     pub scenes: Vec<SceneDocument>,
     pub chat: Vec<Chat>,
     pub audio: Option<AudioTrack>,
+    #[serde(default)]
+    pub images: Vec<crate::media::ImageAsset>,
+    #[serde(default)]
+    pub sounds: Vec<crate::sound::SoundAsset>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,6 +64,8 @@ pub struct Scene {
     pub duration_ms: u32,
     pub background: String,
     pub elements: Vec<Element>,
+    #[serde(default)]
+    pub sounds: Vec<crate::sound::SoundCue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -78,6 +84,10 @@ pub struct Element {
     pub stroke_width: f64,
     pub font_size: f64,
     pub font_weight: u32,
+    #[serde(default = "crate::media::default_font")]
+    pub font_family: String,
+    #[serde(default)]
+    pub image_id: String,
     pub radius: f64,
     pub opacity: f64,
     pub rotation: f64,
@@ -93,6 +103,7 @@ pub enum Kind {
     Ellipse,
     Text,
     Path,
+    Image,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -146,6 +157,8 @@ pub struct AudioTrack {
     pub sections: Vec<u32>,
     pub confidence: f64,
     #[serde(default)]
+    pub start_ms: u32,
+    #[serde(default)]
     pub mix: AudioMix,
 }
 
@@ -178,6 +191,7 @@ impl Scene {
             return Err("Scenes must be 100 ms to 2 minutes, with at most 250 elements.".into());
         }
         check_color(&self.background)?;
+        crate::sound::validate_cues(&self.sounds, self.duration_ms)?;
         let mut ids = std::collections::HashSet::new();
         for e in &self.elements {
             if e.id.is_empty() || !ids.insert(&e.id) || e.id.len() > 100 {
@@ -185,6 +199,12 @@ impl Scene {
             }
             if e.text.len() > 10_000 || e.path.len() > 50_000 {
                 return Err("Element text or path is too long.".into());
+            }
+            if !crate::media::FONTS.contains(&e.font_family.as_str())
+                || e.image_id.len() > 100
+                || (e.kind == Kind::Image && e.image_id.is_empty())
+            {
+                return Err("Choose a supported font and a valid image reference.".into());
             }
             check_color(&e.fill)?;
             check_color(&e.stroke)?;
@@ -268,6 +288,23 @@ impl Project {
             return Err("Projects need 1 to 100 scenes.".into());
         }
         let mut ids = std::collections::HashSet::new();
+        crate::media::validate_images(&self.images)?;
+        crate::sound::validate_assets(&self.sounds)?;
+        if self.images.iter().map(|a| a.data.len()).sum::<usize>()
+            + self.sounds.iter().map(|a| a.data.len()).sum::<usize>()
+            > 12_000_000
+        {
+            return Err("Embedded images and sounds are limited to 12 MB per project.".into());
+        }
+        if self
+            .scenes
+            .iter()
+            .map(|d| d.scene.sounds.len())
+            .sum::<usize>()
+            > 200
+        {
+            return Err("Projects support up to 200 sound cues.".into());
+        }
         for d in &self.scenes {
             d.scene.validate()?;
             if !ids.insert(&d.scene.id) {
@@ -278,6 +315,16 @@ impl Project {
             }
             for r in &d.revisions {
                 r.scene.validate()?;
+            }
+            for scene in std::iter::once(&d.scene).chain(d.revisions.iter().map(|r| &r.scene)) {
+                crate::sound::validate_references(&scene.sounds, &self.sounds)?;
+                for element in &scene.elements {
+                    if element.kind == Kind::Image
+                        && !self.images.iter().any(|a| a.id == element.image_id)
+                    {
+                        return Err("An image layer references a missing image.".into());
+                    }
+                }
             }
             if d.chat.iter().any(|m| m.text.len() > 50_000) {
                 return Err("Chat message too long.".into());
@@ -292,6 +339,7 @@ impl Project {
         if let Some(a) = &self.audio
             && (a.duration_ms > MAX_DURATION
                 || a.duration_ms == 0
+                || a.start_ms >= a.duration_ms
                 || a.peaks.len() > 4000
                 || !a.bpm.is_finite()
                 || !(30.0..=300.0).contains(&a.bpm)
@@ -362,6 +410,8 @@ pub fn element(
         stroke_width: 1.0,
         font_size: 32.0,
         font_weight: 400,
+        font_family: crate::media::default_font(),
+        image_id: String::new(),
         radius: 0.0,
         opacity: 1.0,
         rotation: 0.0,
@@ -505,12 +555,13 @@ pub fn demo_project() -> Project {
                 duration_ms: 4000,
                 background: "#fafafa".into(),
                 elements,
+                sounds: vec![],
             },
             revisions: vec![],
             chat: vec![],
         });
     }
-    Project {version:1,name:"A little motion".into(),width:1280,height:720,fps:30,art_direction:"Quiet, precise motion. Warm white backgrounds, dark typography, and a restrained accent color. Let every movement have a reason.".into(),scenes,chat:vec![],audio:None}
+    Project {version:1,name:"A little motion".into(),width:1280,height:720,fps:30,art_direction:"Quiet, precise motion. Warm white backgrounds, dark typography, and a restrained accent color. Let every movement have a reason.".into(),scenes,chat:vec![],audio:None,images:vec![],sounds:vec![]}
 }
 
 #[cfg(test)]

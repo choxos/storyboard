@@ -7,10 +7,24 @@ import {
 } from "./editing.js";
 import { sceneTemplates, createTemplate, createElement } from "./templates.js";
 import { audioGain } from "./audio-mix.js";
+import { fontFamilies, importImage } from "./media.js";
+import { soundPresets, synthSound, importSound } from "./sound-data.js";
+import {
+  playSounds,
+  stopSounds,
+  previewSound,
+  cuePlacements,
+} from "./sound-playback.js";
 
 const api = window.__TAURI__ || window.storyboardWeb;
 const browser = !!api?.browser;
-const invoke = (name, args = {}) => api.core.invoke(name, args);
+const invoke = (name, args = {}) =>
+  api.core.invoke(
+    name,
+    ["render_frame", "export_frame"].includes(name)
+      ? { images: s.project?.images || [], ...args }
+      : args,
+  );
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
   String(value).replace(
@@ -57,6 +71,7 @@ const s = {
   started: 0,
   startTime: 0,
   busy: false,
+  reviewFrames: true,
   dirty: false,
   path: null,
   undo: [],
@@ -297,6 +312,10 @@ function layerTools() {
     $("#canvas").focus({ preventScroll: true });
   };
   const element = selectedElement();
+  $("#canvas-tools").insertAdjacentHTML(
+    "beforeend",
+    `<button data-action="images" ${s.busy ? "disabled" : ""}>Image / logo</button>`,
+  );
   if (element) {
     $('[data-action="edit-selected"]').insertAdjacentHTML(
       "beforebegin",
@@ -345,6 +364,12 @@ function editText(id = s.layer) {
     `<label>Words<textarea id="quick-text" rows="4" maxlength="10000">${esc(element.text)}</textarea></label><div class="form-row three"><label>Font size<input id="quick-size" type="number" min="1" max="1000" value="${element.font_size}" step="any"></label><label>Weight<select id="quick-weight">${[100, 200, 300, 400, 500, 600, 700, 800, 900].map((weight) => `<option value="${weight}" ${weight === element.font_weight ? "selected" : ""}>${weight === 400 ? "Regular" : weight === 700 ? "Bold" : weight}</option>`).join("")}</select></label><label>Text color<input id="quick-color" type="color" value="${fill === "none" ? "#18181b" : fill}"></label></div><p>Line breaks create new lines. Position and animation stay as you designed them.</p>`,
     '<button id="apply-text" class="primary">Apply text</button>',
   );
+  $("#quick-text")
+    .closest("label")
+    .insertAdjacentHTML(
+      "afterend",
+      `<label>Font family<select id="quick-font">${fontOptions(element.font_family)}</select></label>`,
+    );
   $("#quick-color").oninput = (event) => {
     fill = event.target.value;
   };
@@ -368,7 +393,13 @@ function editText(id = s.layer) {
         revision(doc(), "Before editing text");
         Object.assign(
           doc().scene.elements.find((e) => e.id === id),
-          { text, font_size: size, font_weight: weight, fill },
+          {
+            text,
+            font_size: size,
+            font_weight: weight,
+            font_family: $("#quick-font").value,
+            fill,
+          },
         );
       })
     )
@@ -376,6 +407,78 @@ function editText(id = s.layer) {
   };
   $("#quick-text").focus();
   $("#quick-text").select();
+}
+
+function fontOptions(selected = "Arial") {
+  return fontFamilies
+    .map(
+      (family) =>
+        `<option ${family === selected ? "selected" : ""}>${family}</option>`,
+    )
+    .join("");
+}
+
+function openImages() {
+  if (s.busy) return;
+  const project = s.project,
+    scene = doc().scene,
+    version = s.revision;
+  const d = modal(
+    "Images & logos",
+    `<p>Import PNG, JPEG, or WebP. Images are embedded in your project and fit within 2048 px. Select an image below to add an editable layer.</p><div class="image-library">${(project.images || []).map((image) => `<button data-image-id="${esc(image.id)}"><img src="${esc(image.data)}" alt=""><span>${esc(image.name)}</span><small>${image.width} × ${image.height}</small></button>`).join("") || "<p>No images yet. Import a photo or logo to start.</p>"}</div><p id="image-error" role="alert"></p>`,
+    '<button id="import-image" class="primary">Import image</button>',
+    true,
+  );
+  const add = async (image, imported = false) => {
+    if (!d.open || s.revision !== version || doc().scene.id !== scene.id)
+      return;
+    const scale = Math.min(
+      (project.width * 0.6) / image.width,
+      (project.height * 0.6) / image.height,
+      1,
+    );
+    const layer = createElement(project.width, project.height, {
+      kind: "image",
+      text: "",
+      image_id: image.id,
+      width: image.width * scale,
+      height: image.height * scale,
+    });
+    if (
+      await commit(() => {
+        revision(doc(), "Before adding image");
+        if (imported) (s.project.images ||= []).push(image);
+        doc().scene.elements.push(layer);
+        s.layer = layer.id;
+        s.layerScene = scene.id;
+      })
+    )
+      d.close();
+  };
+  d.querySelectorAll("[data-image-id]").forEach((button) => {
+    button.onclick = () =>
+      add(project.images.find((image) => image.id === button.dataset.imageId));
+  });
+  $("#import-image").insertAdjacentHTML(
+    "afterend",
+    '<input id="image-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>',
+  );
+  $("#import-image").onclick = () => $("#image-file").click();
+  $("#image-file").onchange = async (event) => {
+    const button = $("#import-image"),
+      error = $("#image-error");
+    button.disabled = true;
+    error.textContent = "";
+    try {
+      const file = event.target.files[0];
+      if (file && d.open) await add(await importImage(file), true);
+    } catch (e) {
+      error.textContent = String(e);
+    } finally {
+      button.disabled = false;
+      event.target.value = "";
+    }
+  };
 }
 function selectLayer(id) {
   pause();
@@ -528,6 +631,13 @@ function sidebar() {
     `<button class="icon redo" data-action="redo" aria-label="Redo" title="Redo (Command+Shift+Z)" ${s.redo.length && !s.busy ? "" : "disabled"}>${icon("undo")}</button>`,
   );
   modelPicker();
+  $("#model-picker").insertAdjacentHTML(
+    "afterend",
+    `<label class="check frame-review"><input id="review-frames" type="checkbox" ${s.reviewFrames ? "checked" : ""} ${s.busy ? "disabled" : ""}>${browser ? "Include rendered frame review" : "Review rendered frames (2 AI passes)"}</label>`,
+  );
+  $("#review-frames").onchange = (event) => {
+    s.reviewFrames = event.target.checked;
+  };
   if (browser) {
     $('[data-action="send"]')?.replaceChildren("Prepare prompt");
     $(".composer-hint > span:last-child").textContent =
@@ -602,12 +712,191 @@ function loadModels(provider = s.provider) {
   return request;
 }
 
+function soundLane(lane) {
+  const cues = cuePlacements(s.project);
+  lane.insertAdjacentHTML(
+    "beforeend",
+    `<div class="sound-lane"><button data-action="sounds">Sound effects${cues.length ? ` (${cues.length})` : ""}</button><div class="sound-markers" aria-label="Timed sound effects">${cues.map(({ cue, sound, start }) => `<button class="sound-marker" data-cue="${esc(cue.id)}" data-sound-time="${start}" style="left:${(start / duration()) * 100}%" title="${esc(sound.name)} at ${(start / 1000).toFixed(3)} s" aria-label="${esc(sound.name)} at ${(start / 1000).toFixed(3)} seconds">♪</button>`).join("")}</div></div>`,
+  );
+  lane.querySelectorAll("[data-cue]").forEach((button) => {
+    button.onclick = () => {
+      s.mode = "project";
+      seek(Number(button.dataset.soundTime));
+      refresh();
+      openSounds(button.dataset.cue);
+    };
+  });
+}
+
+function openSounds(selectedId) {
+  if (s.busy) return;
+  const sceneId = doc().scene.id,
+    version = s.revision;
+  const cues = clone(doc().scene.sounds || []),
+    assets = [...(s.project.sounds || [])];
+  const local = Math.min(
+    doc().scene.duration_ms - 1,
+    Math.max(0, Math.round(globalTime() - sceneStart())),
+  );
+  const d = modal(
+    "Sound effects",
+    `<p>Add effects at the playhead (${(local / 1000).toFixed(3)} s in this scene). Cues move with their scene. Tails can continue across cuts.</p><div class="form-row"><label>Clip<select id="sound-library"></select></label><button id="preview-sound">Preview clip</button><button id="add-sound">Add at playhead</button></div><input id="sound-file" type="file" accept="audio/*" hidden><button id="import-sound">Import clip (up to 15 s)</button><div id="sound-cues"></div><p id="sound-error" role="alert"></p>`,
+    '<button id="apply-sounds" class="primary">Apply sound effects</button>',
+    true,
+  );
+  d.addEventListener("close", stopSounds, { once: true });
+  const library = $("#sound-library");
+  const fillLibrary = () => {
+    library.innerHTML = `<optgroup label="Built-in effects">${Object.entries(
+      soundPresets,
+    )
+      .map(([id, name]) => `<option value="preset:${id}">${name}</option>`)
+      .join(
+        "",
+      )}</optgroup><optgroup label="Project clips">${assets.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</optgroup>`;
+  };
+  const chosen = () =>
+    library.value.startsWith("preset:")
+      ? synthSound(library.value.slice(7))
+      : assets.find((a) => a.id === library.value);
+  const renderCues = () => {
+    $("#sound-cues").innerHTML = cues.length
+      ? cues
+          .map(
+            (cue) =>
+              `<fieldset class="sound-cue" data-sound-cue="${esc(cue.id)}"><legend>${esc(assets.find((a) => a.id === cue.sound_id).name)}</legend><div class="sound-fields"><label>At (s)<input data-field="at_ms" type="number" min="0" max="${(doc().scene.duration_ms - 1) / 1000}" step="0.001" value="${cue.at_ms / 1000}"></label><label>Trim start (s)<input data-field="trim_start_ms" type="number" min="0" max="${(assets.find((a) => a.id === cue.sound_id).duration_ms - 1) / 1000}" step="0.001" value="${cue.trim_start_ms / 1000}"></label><label>Length (s)<input data-field="duration_ms" type="number" min="0.001" max="30" step="0.001" value="${cue.duration_ms / 1000}"></label><label>Volume (%)<input data-field="volume" type="number" min="0" max="100" step="1" value="${Math.round(cue.volume * 100)}"></label><label>Pitch (semitones)<input data-field="pitch" type="number" min="-12" max="12" step="1" value="${cue.pitch}"></label></div><button data-preview-cue="${esc(cue.id)}">Preview cue</button><button data-remove-cue="${esc(cue.id)}">Remove</button></fieldset>`,
+          )
+          .join("")
+      : "<p>No sound effects in this scene.</p>";
+    d.querySelectorAll("[data-field]").forEach((input) => {
+      input.oninput = () => {
+        const cue = cues.find(
+          (c) => c.id === input.closest("[data-sound-cue]").dataset.soundCue,
+        );
+        const key = input.dataset.field;
+        cue[key] =
+          key === "volume"
+            ? Number(input.value) / 100
+            : Math.round(Number(input.value) * (key === "pitch" ? 1 : 1000));
+      };
+    });
+    d.querySelectorAll("[data-remove-cue]").forEach((button) => {
+      button.onclick = () => {
+        stopSounds();
+        cues.splice(
+          cues.findIndex((c) => c.id === button.dataset.removeCue),
+          1,
+        );
+        renderCues();
+      };
+    });
+    d.querySelectorAll("[data-preview-cue]").forEach((button) => {
+      button.onclick = () => {
+        if (
+          ![...d.querySelectorAll("[data-field]")].every((input) =>
+            input.reportValidity(),
+          )
+        )
+          return;
+        const cue = cues.find((c) => c.id === button.dataset.previewCue);
+        playSounds(
+          {
+            sounds: assets,
+            scenes: [
+              {
+                scene: {
+                  duration_ms: cue.duration_ms,
+                  sounds: [{ ...cue, at_ms: 0 }],
+                },
+              },
+            ],
+          },
+          0,
+          cue.duration_ms,
+        ).catch((e) => {
+          $("#sound-error").textContent = String(e);
+        });
+      };
+    });
+  };
+  $("#preview-sound").onclick = () =>
+    previewSound(chosen()).catch((e) => {
+      $("#sound-error").textContent = String(e);
+    });
+  $("#add-sound").onclick = () => {
+    let asset = chosen();
+    asset = assets.find((a) => a.data === asset.data) || asset;
+    if (!assets.some((a) => a.id === asset.id)) assets.push(asset);
+    cues.push({
+      id: crypto.randomUUID(),
+      sound_id: asset.id,
+      at_ms: local,
+      trim_start_ms: 0,
+      duration_ms: asset.duration_ms,
+      volume: 0.7,
+      pitch: 0,
+    });
+    fillLibrary();
+    library.value = asset.id;
+    renderCues();
+    $("#sound-cues").lastElementChild?.scrollIntoView({ block: "nearest" });
+  };
+  $("#import-sound").onclick = () => $("#sound-file").click();
+  $("#sound-file").onchange = async (event) => {
+    const button = $("#import-sound");
+    button.disabled = true;
+    try {
+      const file = event.target.files[0];
+      if (file) {
+        const asset = await importSound(file);
+        if (d.open) {
+          assets.push(asset);
+          fillLibrary();
+          library.value = asset.id;
+        }
+      }
+    } catch (e) {
+      $("#sound-error").textContent = String(e);
+    } finally {
+      button.disabled = false;
+      event.target.value = "";
+    }
+  };
+  $("#apply-sounds").onclick = async () => {
+    if (
+      ![...d.querySelectorAll("[data-field]")].every((input) =>
+        input.reportValidity(),
+      )
+    )
+      return;
+    if (s.revision !== version || doc().scene.id !== sceneId) {
+      $("#sound-error").textContent = "Project changed. Reopen sound effects.";
+      return;
+    }
+    if (
+      await commit(() => {
+        revision(doc(), "Before sound edits");
+        s.project.sounds = assets;
+        doc().scene.sounds = cues;
+      })
+    )
+      d.close();
+  };
+  fillLibrary();
+  renderCues();
+  if (selectedId)
+    [...d.querySelectorAll("[data-sound-cue]")]
+      .find((el) => el.dataset.soundCue === selectedId)
+      ?.scrollIntoView({ block: "nearest" });
+}
+
 function audioLane() {
   const a = s.project.audio;
   const lane = $("#audio-lane");
   lane.classList.toggle("loaded", !!a);
   if (!a) {
     lane.innerHTML = `<button data-action="import">${icon("music")}Add a soundtrack</button><span class="audio-note">Drop audio anywhere. Find beats, downbeats, and sections.</span>`;
+    soundLane(lane);
     return;
   }
   lane.innerHTML = `<div class="audio-header">${icon("music")}<span class="audio-name">${esc(a.name)}</span><span>${a.bpm.toFixed(1)} BPM</span><button data-action="audio-grid">Beat grid</button><label class="check"><input id="snap" type="checkbox" ${s.snap ? "checked" : ""}>Snap</label><button data-action="snap-cuts">Snap cuts</button><button data-action="snap-motion">Snap motion</button><span class="spacer"></span><button class="quiet" data-action="import" aria-label="Replace soundtrack">Replace</button><button class="quiet" data-action="remove-audio" aria-label="Remove soundtrack">${icon("close")}</button></div><svg class="waveform" id="waveform" viewBox="0 0 1000 42" preserveAspectRatio="none" role="img" aria-label="Audio waveform with estimated beat markers"></svg>`;
@@ -618,21 +907,23 @@ function audioLane() {
   let wave = "";
   const total = duration();
   for (let x = 0; x < 1000; x += 2) {
-    const time = (x / 1000) * total;
+    const time = (x / 1000) * total + (a.start_ms || 0);
     const index = Math.floor((time / a.duration_ms) * a.peaks.length);
     const h = (a.peaks[index] || 0) * 18;
     wave += `M${x},${21 - h}v${2 * h || 1}`;
   }
   let lines = "";
   const step = 60000 / a.bpm;
-  const first = Math.floor(-a.offset_ms / step);
-  for (let n = first; n < Math.ceil((total - a.offset_ms) / step); n++) {
-    const t = a.offset_ms + n * step;
+  const offset = a.offset_ms - (a.start_ms || 0);
+  const first = Math.floor(-offset / step);
+  for (let n = first; n < Math.ceil((total - offset) / step); n++) {
+    const t = offset + n * step;
     if (t < 0) continue;
     const x = (t / total) * 1000;
     lines += `<line x1="${x}" x2="${x}" y1="0" y2="42" stroke="${n % a.beats_per_bar === 0 ? "#8c71ba" : "#c0b6d4"}" stroke-width="${n % a.beats_per_bar === 0 ? 1.5 : 0.6}"/>`;
   }
   const sections = a.sections
+    .map((t) => t - (a.start_ms || 0))
     .filter((t) => t > 0 && t < total)
     .map((t) => `<path d="M${(t / total) * 1000},0l4,5h-8z" fill="#d07a56"/>`)
     .join("");
@@ -645,6 +936,7 @@ function audioLane() {
     seek(((e.clientX - box.left) / box.width) * total, s.snap);
     refresh();
   });
+  soundLane(lane);
 }
 
 function setAudio() {
@@ -663,8 +955,13 @@ audio.addEventListener("error", () => {
     );
 });
 function syncAudio() {
+  playSounds(
+    s.project,
+    globalTime(),
+    s.mode === "scene" ? sceneStart() + limit() : duration(),
+  ).catch((e) => toast(`Sound playback failed: ${e.message}`, true));
   if (!s.project.audio) return;
-  const time = globalTime() / 1000;
+  const time = (globalTime() + (s.project.audio.start_ms || 0)) / 1000;
   if (time < s.project.audio.duration_ms / 1000) {
     audio.currentTime = Math.max(0, time);
     audio
@@ -676,6 +973,7 @@ function pause() {
   s.playing = false;
   s.playToken++;
   audio.pause();
+  stopSounds();
   if (s.project) transport();
 }
 function play() {
@@ -697,7 +995,9 @@ async function tick(token) {
   if (s.project.audio && !audio.paused && audio.readyState >= 2) {
     s.time = Math.max(
       0,
-      audio.currentTime * 1000 - (s.mode === "scene" ? sceneStart() : 0),
+      audio.currentTime * 1000 -
+        (s.project.audio.start_ms || 0) -
+        (s.mode === "scene" ? sceneStart() : 0),
     );
     s.startTime = s.time;
     s.started = now;
@@ -749,10 +1049,8 @@ function snapped(time, downbeats = false) {
   const a = s.project.audio;
   if (!a) return time;
   const step = (60000 / a.bpm) * (downbeats ? a.beats_per_bar : 1);
-  return Math.max(
-    0,
-    a.offset_ms + Math.round((time - a.offset_ms) / step) * step,
-  );
+  const offset = a.offset_ms - (a.start_ms || 0);
+  return Math.max(0, offset + Math.round((time - offset) / step) * step);
 }
 function seek(time, snap = false) {
   pause();
@@ -848,6 +1146,8 @@ function blankScene(width = s.project.width, height = s.project.height) {
 }
 function retime(scene, newDuration) {
   const ratio = newDuration / scene.duration_ms;
+  for (const cue of scene.sounds || [])
+    cue.at_ms = Math.min(newDuration - 1, Math.round(cue.at_ms * ratio));
   for (const e of scene.elements)
     for (const t of e.tracks) {
       const unique = new Map();
@@ -909,11 +1209,15 @@ async function send() {
   try {
     const reply = await job("generate", {
       project: snapshot,
-      sceneIndex: scope === "scene" ? index : null,
-      provider,
-      model,
-      effort,
-      prompt,
+      request: {
+        scene_index: scope === "scene" ? index : null,
+        provider,
+        model,
+        effort,
+        prompt,
+        playhead_ms: globalTime(),
+        review_frames: s.reviewFrames,
+      },
     });
     if (version !== s.revision)
       throw new Error(
@@ -1145,6 +1449,8 @@ function openTemplates(newProject = false) {
         height,
         scenes: [document],
         audio: null,
+        images: [],
+        sounds: [],
         chat: [],
       };
       try {
@@ -1403,7 +1709,13 @@ function audioGrid() {
     `<button id="offset-playhead">Use playhead as downbeat</button><span class="spacer"></span><button id="apply-grid" class="primary">Apply grid</button>`,
   );
   $("#offset-playhead").onclick = () =>
-    ($("#beat-offset").value = Math.round(globalTime()));
+    ($("#beat-offset").value = Math.round(globalTime() + (a.start_ms || 0)));
+  $("#sections")
+    .closest("label")
+    .insertAdjacentHTML(
+      "afterend",
+      "<p>Downbeat and section times refer to the original audio file. The soundtrack start offset shifts them into video time.</p>",
+    );
   $("#apply-grid").onclick = async () => {
     const bpm = Number($("#bpm").value),
       offset = Number($("#beat-offset").value),
@@ -1437,12 +1749,17 @@ function soundMix() {
     fade_out_ms: 0,
     ...track.mix,
   };
-  const end = Math.min(track.duration_ms, duration());
   const d = modal(
-    "Soundtrack volume & fades",
-    `<p>${esc(track.name)}. These settings apply to playback and exported video.</p><label>Volume <output id="mix-volume-value">${Math.round(mix.volume * 100)}%</output><input id="mix-volume" type="range" min="0" max="100" step="1" value="${Math.round(mix.volume * 100)}"></label><label class="check"><input id="mix-muted" type="checkbox" ${mix.muted ? "checked" : ""}>Mute soundtrack</label><div class="form-row"><label>Fade in (seconds)<input id="mix-in" type="number" min="0" max="600" step="0.1" value="${mix.fade_in_ms / 1000}"></label><label>Fade out (seconds)<input id="mix-out" type="number" min="0" max="600" step="0.1" value="${mix.fade_out_ms / 1000}"></label></div><p>Fade in starts with the video. Fade out finishes when the video or soundtrack ends, whichever comes first (${seconds(end)} here). Long fades shorten to fit; overlapping fades combine.</p>`,
+    "Soundtrack & mix",
+    `<p>${esc(track.name)}. These settings apply to playback and exported video.</p><label>Volume <output id="mix-volume-value">${Math.round(mix.volume * 100)}%</output><input id="mix-volume" type="range" min="0" max="100" step="1" value="${Math.round(mix.volume * 100)}"></label><label class="check"><input id="mix-muted" type="checkbox" ${mix.muted ? "checked" : ""}>Mute soundtrack</label><div class="form-row"><label>Fade in (seconds)<input id="mix-in" type="number" min="0" max="600" step="0.1" value="${mix.fade_in_ms / 1000}"></label><label>Fade out (seconds)<input id="mix-out" type="number" min="0" max="600" step="0.1" value="${mix.fade_out_ms / 1000}"></label></div><p>Fade in starts with the video. Fade out finishes when the video or remaining soundtrack ends, whichever comes first. Long fades shorten to fit; overlapping fades combine.</p>`,
     '<button id="reset-mix">Reset mix</button><span class="spacer"></span><button id="apply-mix" class="primary">Apply mix</button>',
   );
+  $("#mix-volume")
+    .closest("label")
+    .insertAdjacentHTML(
+      "beforebegin",
+      `<label>Start in track (seconds)<input id="mix-start" type="number" min="0" max="${(track.duration_ms - 1) / 1000}" step="0.001" value="${(track.start_ms || 0) / 1000}"></label><p>Skip the beginning of the song. Waveform, beat markers, playback, and exports use this start time.</p>`,
+    );
   const volumeLabel = () => {
     $("#mix-volume-value").textContent = `${$("#mix-volume").value}%`;
   };
@@ -1451,10 +1768,15 @@ function soundMix() {
     $("#mix-volume").value = 100;
     $("#mix-muted").checked = false;
     $("#mix-in").value = $("#mix-out").value = 0;
+    $("#mix-start").value = 0;
     volumeLabel();
   };
   $("#apply-mix").onclick = async () => {
-    if (!$("#mix-in").reportValidity() || !$("#mix-out").reportValidity())
+    if (
+      !$("#mix-in").reportValidity() ||
+      !$("#mix-out").reportValidity() ||
+      !$("#mix-start").reportValidity()
+    )
       return;
     const value = {
       volume: Number($("#mix-volume").value) / 100,
@@ -1465,6 +1787,9 @@ function soundMix() {
     if (
       await commit(() => {
         s.project.audio.mix = value;
+        s.project.audio.start_ms = Math.round(
+          Number($("#mix-start").value) * 1000,
+        );
       })
     )
       d.close();
@@ -1587,6 +1912,8 @@ function click(e) {
     "canvas-settings": () => openProjectSettings(true),
     "refresh-models": () => loadModels(),
     inspector: () => openInspector(),
+    images: openImages,
+    sounds: () => openSounds(),
     import: () => importAudio(),
     export: exportVideo,
     "export-png": () => exportStill("png"),
@@ -1732,6 +2059,16 @@ function openInspector(elementId) {
           "",
         )}</select></label><button id="apply-preset">Apply preset</button></div><p>Presets use up to 600 ms and replace only their affected tracks. Base values set the final position, scale, and opacity. Other tracks remain unchanged.</p>`,
     );
+    if (el.kind === "text")
+      $("#layer-form").insertAdjacentHTML(
+        "afterbegin",
+        `<label>Font family<select data-prop="font_family">${fontOptions(el.font_family)}</select></label>`,
+      );
+    if (el.kind === "image")
+      $("#layer-form").insertAdjacentHTML(
+        "afterbegin",
+        `<label>Image<select data-prop="image_id">${(s.project.images || []).map((image) => `<option value="${esc(image.id)}" ${image.id === el.image_id ? "selected" : ""}>${esc(image.name)}</option>`).join("")}</select></label><p>Image keeps its proportions inside the width and height. Use Image / logo above the canvas to import another.</p>`,
+      );
     $("#duplicate-layer").onclick = () => {
       const copy = clone(el);
       copy.id = uid();

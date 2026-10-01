@@ -20,13 +20,15 @@ pub fn frame(
     height: u32,
     format: &str,
     path: &Path,
+    images: &[crate::media::ImageAsset],
 ) -> Result<(), String> {
     scene.validate()?;
+    crate::media::validate_images(images)?;
     validate_canvas(width, height)?;
     if !time_ms.is_finite() || !["png", "svg"].contains(&format) {
         return Err("Choose PNG or SVG and a finite frame time.".into());
     }
-    let svg = render::svg(scene, time_ms, width, height);
+    let svg = render::svg(scene, time_ms, width, height, images);
     let bytes = if format == "svg" {
         svg.into_bytes()
     } else {
@@ -84,37 +86,8 @@ pub fn mp4(
         "-i",
         "pipe:0",
     ]);
-    if let Some(a) = &project.audio {
-        let end = f64::from(a.duration_ms.min(project.duration_ms())) / 1000.0;
-        let mut filters = vec![format!(
-            "volume={}",
-            if a.mix.muted { 0.0 } else { a.mix.volume }
-        )];
-        let fade_in = (f64::from(a.mix.fade_in_ms) / 1000.0).min(end);
-        let fade_out = (f64::from(a.mix.fade_out_ms) / 1000.0).min(end);
-        if fade_in > 0.0 {
-            filters.push(format!("afade=t=in:st=0:d={fade_in}:curve=tri"));
-        }
-        if fade_out > 0.0 {
-            filters.push(format!(
-                "afade=t=out:st={}:d={fade_out}:curve=tri",
-                end - fade_out
-            ));
-        }
-        filters.push("apad".into());
-        cmd.arg("-i").arg(&a.path).args([
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-af",
-            &filters.join(","),
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-        ]);
-    }
+    let sound_files = tempfile::tempdir().map_err(|e| e.to_string())?;
+    crate::sound_export::configure(project, &mut cmd, sound_files.path())?;
     cmd.args([
         "-c:v",
         "libx264",
@@ -149,7 +122,7 @@ pub fn mp4(
             }
             let time = f64::from(frame) * 1000.0 / f64::from(project.fps);
             let (scene, local) = project.scene_at(time);
-            let svg = render::svg(scene, local, project.width, project.height);
+            let svg = render::svg(scene, local, project.width, project.height, &project.images);
             let pixels = render::raster(&svg, project.width, project.height, &options, false)?;
             pipe.write_all(pixels.data())
                 .map_err(|e| format!("Encoder stopped: {e}"))?;

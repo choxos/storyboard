@@ -42,6 +42,8 @@ export function createElement(width, height, values = {}) {
     stroke_width: 1,
     font_size: Math.min(64, Math.min(width, height) * 0.09),
     font_weight: 700,
+    font_family: "Arial",
+    image_id: "",
     radius: 0,
     opacity: 1,
     rotation: 0,

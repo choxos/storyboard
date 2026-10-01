@@ -1,3 +1,29 @@
+import { fontFamilies, pngSize } from "../ui/media.js";
+import { readSound } from "../ui/sound-data.js";
+
+export interface SoundAsset {
+  id: string;
+  name: string;
+  data: string;
+  duration_ms: number;
+}
+export interface SoundCue {
+  id: string;
+  sound_id: string;
+  at_ms: number;
+  volume: number;
+  pitch: number;
+  trim_start_ms: number;
+  duration_ms: number;
+}
+
+export interface ImageAsset {
+  id: string;
+  name: string;
+  data: string;
+  width: number;
+  height: number;
+}
 export type Property =
   | "x"
   | "y"
@@ -19,7 +45,7 @@ export interface Track {
 }
 export interface Element {
   id: string;
-  kind: "text" | "rect" | "ellipse" | "path";
+  kind: "text" | "rect" | "ellipse" | "path" | "image";
   text: string;
   path: string;
   x: number;
@@ -31,6 +57,8 @@ export interface Element {
   stroke_width: number;
   font_size: number;
   font_weight: number;
+  font_family?: string;
+  image_id?: string;
   radius: number;
   opacity: number;
   rotation: number;
@@ -44,6 +72,7 @@ export interface Scene {
   duration_ms: number;
   background: string;
   elements: Element[];
+  sounds?: SoundCue[];
 }
 export interface Chat {
   role: string;
@@ -65,6 +94,7 @@ export interface AudioTrack {
   beats_per_bar: number;
   sections: number[];
   confidence: number;
+  start_ms?: number;
   mix?: {
     volume: number;
     muted: boolean;
@@ -82,6 +112,8 @@ export interface Project {
   scenes: SceneDocument[];
   chat: Chat[];
   audio: AudioTrack | null;
+  images?: ImageAsset[];
+  sounds?: SoundAsset[];
 }
 export interface Reply {
   summary: string;
@@ -155,26 +187,50 @@ export function validateCanvas(w: number, h: number) {
         4320, "Use even canvas dimensions, up to 35,389,440 total pixels.");
 }
 export function validateScene(value: unknown): asserts value is Scene {
-  const s = object(value, "id name duration_ms background elements");
+  const s = object(value, "id name duration_ms background elements", "sounds");
   string(s.id, 100, 1);
   string(s.name, 200);
   number(s.duration_ms, 100, 120000, true);
   color(s.background);
+  const cues = s.sounds ?? [];
+  array(cues, 64);
+  const cueIds = new Set();
+  for (const raw of cues) {
+    const cue = object(
+      raw,
+      "id sound_id at_ms volume pitch trim_start_ms duration_ms",
+    );
+    string(cue.id, 100, 1);
+    string(cue.sound_id, 100, 1);
+    require(!cueIds.has(cue.id), "Sound cue IDs must be unique.");
+    cueIds.add(cue.id);
+    number(cue.at_ms, 0, s.duration_ms - 1, true);
+    number(cue.volume, 0, 1);
+    number(cue.pitch, -12, 12, true);
+    number(cue.trim_start_ms, 0, 14999, true);
+    number(cue.duration_ms, 1, 30000, true);
+  }
   array(s.elements, 250);
   const ids = new Set();
   for (const raw of s.elements) {
     const e = object(
       raw,
       "id kind text path x y width height fill stroke stroke_width font_size font_weight radius opacity rotation scale_x scale_y tracks",
+      "font_family image_id",
     );
     string(e.id, 100, 1);
     require(!ids.has(e.id), "Element IDs must be unique.");
     ids.add(e.id);
-    require(["text", "rect", "ellipse", "path"].includes(
+    require(["text", "rect", "ellipse", "path", "image"].includes(
       String(e.kind),
     ), "Invalid element kind.");
     string(e.text, 10000);
     string(e.path, 50000);
+    if (e.font_family !== undefined)
+      require(typeof e.font_family === "string" &&
+        fontFamilies.includes(e.font_family), "Choose a supported font.");
+    if (e.image_id !== undefined) string(e.image_id, 100);
+    if (e.kind === "image") string(e.image_id, 100, 1);
     color(e.fill);
     color(e.stroke);
     for (const k of ["x", "y", "rotation", "scale_x", "scale_y"])
@@ -226,6 +282,7 @@ export function validateProject(value: unknown): asserts value is Project {
   const p = object(
     value,
     "version name width height fps art_direction scenes chat audio",
+    "images sounds",
   );
   require(p.version === 1, "Unsupported project version.");
   string(p.name, 200);
@@ -236,11 +293,21 @@ export function validateProject(value: unknown): asserts value is Project {
   require([24, 30, 60].includes(Number(p.fps)) &&
     typeof p.fps === "number", "Use 24, 30, or 60 fps.");
   array(p.scenes, 100, 1);
+  const images = p.images ?? [];
+  validateImages(images);
+  const sounds = p.sounds ?? [];
+  validateSounds(sounds);
+  require([...images, ...sounds].reduce((n, a) => n + a.data.length, 0) <=
+    12000000, "Embedded images and sounds are limited to 12 MB per project.");
   const ids = new Set();
   let duration = 0;
+  let cueCount = 0;
   for (const raw of p.scenes) {
     const d = object(raw, "scene revisions chat");
     validateScene(d.scene);
+    validateImageReferences(d.scene, images);
+    validateSoundReferences(d.scene, sounds);
+    cueCount += d.scene.sounds?.length ?? 0;
     require(!ids.has(d.scene.id), "Scene IDs must be unique.");
     ids.add(d.scene.id);
     duration += d.scene.duration_ms;
@@ -249,20 +316,25 @@ export function validateProject(value: unknown): asserts value is Project {
       const r = object(rawRevision, "label scene");
       string(r.label, 50000);
       validateScene(r.scene);
+      validateImageReferences(r.scene, images);
+      validateSoundReferences(r.scene, sounds);
     }
     chat(d.chat);
   }
   require(duration <= 600000, "Projects are limited to 10 minutes.");
+  require(cueCount <= 200, "Projects support up to 200 sound cues.");
   chat(p.chat);
   if (p.audio !== null) {
     const a = object(
       p.audio,
       "path name duration_ms peaks bpm offset_ms beats_per_bar sections confidence",
-      "mix",
+      "mix start_ms",
     );
     string(a.path, 10000);
     string(a.name, 1000);
     number(a.duration_ms, 1, 600000, true);
+    if (a.start_ms !== undefined)
+      number(a.start_ms, 0, a.duration_ms - 1, true);
     number(a.bpm, 30, 300);
     number(a.offset_ms, -600000, 600000);
     number(a.beats_per_bar, 1, 12, true);
@@ -278,6 +350,55 @@ export function validateProject(value: unknown): asserts value is Project {
       number(mix.fade_in_ms, 0, 600000, true);
       number(mix.fade_out_ms, 0, 600000, true);
     }
+  }
+}
+export function validateImages(value: unknown): asserts value is ImageAsset[] {
+  array(value, 40);
+  const ids = new Set();
+  let bytes = 0;
+  for (const raw of value) {
+    const image = object(raw, "id name data width height");
+    string(image.id, 100, 1);
+    string(image.name, 1000);
+    require(!ids.has(image.id), "Image IDs must be unique.");
+    ids.add(image.id);
+    string(image.data, 5600000, 1);
+    const [width, height] = pngSize(image.data);
+    require(image.width === width &&
+      image.height === height, "Image dimensions do not match PNG data.");
+    bytes += image.data.length;
+  }
+  require(bytes <=
+    12000000, "Embedded image data is limited to 12 MB per project.");
+}
+export function validateImageReferences(scene: Scene, images: ImageAsset[]) {
+  for (const e of scene.elements)
+    if (e.kind === "image")
+      require(images.some(
+        (a) => a.id === e.image_id,
+      ), "An image layer references a missing image.");
+}
+export function validateSounds(value: unknown): asserts value is SoundAsset[] {
+  array(value, 40);
+  const ids = new Set();
+  for (const raw of value) {
+    const sound = object(raw, "id name data duration_ms");
+    string(sound.id, 100, 1);
+    string(sound.name, 1000);
+    string(sound.data, 2000000, 1);
+    require(!ids.has(sound.id), "Sound IDs must be unique.");
+    ids.add(sound.id);
+    require(sound.duration_ms ===
+      readSound(sound.data)
+        .duration_ms, "Sound duration does not match its data.");
+  }
+}
+export function validateSoundReferences(scene: Scene, sounds: SoundAsset[]) {
+  for (const cue of scene.sounds ?? []) {
+    const sound = sounds.find((a) => a.id === cue.sound_id);
+    require(sound &&
+      cue.trim_start_ms <
+        sound.duration_ms, "Sound cue references a missing clip or invalid trim.");
   }
 }
 export function parseProject(text: string): Project {

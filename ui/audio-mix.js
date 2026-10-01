@@ -1,6 +1,9 @@
 export function audioGain(audio, time, projectDuration) {
   if (!audio || audio.mix?.muted) return 0;
-  const end = Math.min(audio.duration_ms, projectDuration);
+  const end = Math.min(
+    audio.duration_ms - (audio.start_ms || 0),
+    projectDuration,
+  );
   if (time < 0 || time >= end) return 0;
   const mix = audio.mix || {};
   const fadeIn = Math.min(mix.fade_in_ms || 0, end);

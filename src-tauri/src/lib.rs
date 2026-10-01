@@ -1,10 +1,14 @@
 pub mod ai;
+pub mod ai_frames;
 pub mod audio;
 pub mod export;
+pub mod media;
 pub mod model;
 pub mod models;
 pub mod process;
 pub mod render;
+pub mod sound;
+pub mod sound_export;
 pub mod storage;
 
 use model::{Project, Scene};
@@ -108,13 +112,20 @@ fn cancel_model_discovery(discovery: tauri::State<'_, ModelDiscovery>) {
 }
 
 #[tauri::command]
-fn render_frame(scene: Scene, time_ms: f64, width: u32, height: u32) -> Result<String, String> {
+fn render_frame(
+    scene: Scene,
+    time_ms: f64,
+    width: u32,
+    height: u32,
+    images: Vec<media::ImageAsset>,
+) -> Result<String, String> {
     scene.validate()?;
     model::validate_canvas(width, height)?;
     if !time_ms.is_finite() {
         return Err("Invalid frame dimensions or time.".into());
     }
-    Ok(render::svg(&scene, time_ms, width, height))
+    media::validate_images(&images)?;
+    Ok(render::svg(&scene, time_ms, width, height, &images))
 }
 
 #[tauri::command]
@@ -198,25 +209,13 @@ async fn import_audio(
 #[tauri::command]
 async fn generate(
     project: Project,
-    scene_index: Option<usize>,
-    provider: String,
-    model: String,
-    effort: String,
-    prompt: String,
+    request: ai::Request,
     jobs: tauri::State<'_, Jobs>,
 ) -> Result<ai::Reply, String> {
     let (guard, cancel) = jobs.begin()?;
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
-        ai::generate(
-            &project,
-            scene_index,
-            &provider,
-            &model,
-            &effort,
-            &prompt,
-            &cancel,
-        )
+        ai::generate(&project, &request, &cancel)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -255,6 +254,7 @@ fn cancel_job(jobs: tauri::State<'_, Jobs>) {
 #[tauri::command]
 async fn export_frame(
     scene: Scene,
+    images: Vec<media::ImageAsset>,
     time_ms: f64,
     width: u32,
     height: u32,
@@ -274,7 +274,7 @@ async fn export_frame(
             .set_file_name(format!("Storyboard-frame.{format}"))
             .save_file();
         path.map(|path| {
-            export::frame(&scene, time_ms, width, height, &format, &path)?;
+            export::frame(&scene, time_ms, width, height, &format, &path, &images)?;
             Ok(path.to_string_lossy().into_owned())
         })
         .transpose()
@@ -300,6 +300,7 @@ async fn check_seams(project: Project) -> Result<Vec<f64>, String> {
                         f64::from(pair[0].scene.duration_ms),
                         project.width,
                         project.height,
+                        &project.images,
                     ),
                     width,
                     height,
@@ -307,7 +308,13 @@ async fn check_seams(project: Project) -> Result<Vec<f64>, String> {
                     false,
                 )?;
                 let b = render::raster(
-                    &render::svg(&pair[1].scene, 0.0, project.width, project.height),
+                    &render::svg(
+                        &pair[1].scene,
+                        0.0,
+                        project.width,
+                        project.height,
+                        &project.images,
+                    ),
                     width,
                     height,
                     &options,

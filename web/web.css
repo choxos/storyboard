@@ -45,8 +45,8 @@
     overflow: visible;
   }
   .browser-app .preview-pane {
-    min-height: 460px;
-    height: 55dvh;
+    min-height: max(460px, 55dvh);
+    height: auto;
     flex-shrink: 0;
     padding: 15px 10px;
   }
