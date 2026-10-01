@@ -40,6 +40,29 @@ export async function storeFile(key: string, value: unknown): Promise<void> {
     };
   });
 }
+export async function pruneFiles(
+  prefix: string,
+  keep: Set<unknown>,
+): Promise<void> {
+  const db = await database();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("files", "readwrite"),
+      store = tx.objectStore("files"),
+      request = store.getAllKeys();
+    request.onsuccess = () => {
+      for (const key of request.result)
+        if (String(key).startsWith(prefix) && !keep.has(key)) store.delete(key);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
 export function pickFile(accept: string): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");

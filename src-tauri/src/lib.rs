@@ -111,6 +111,10 @@ fn cancel_model_discovery(discovery: tauri::State<'_, ModelDiscovery>) {
     discovery.0.store(true, Ordering::SeqCst);
 }
 
+/// Image data already decoded by the preview, so playback skips a PNG decode per frame.
+#[derive(Default)]
+struct PreviewImages(std::sync::Mutex<Vec<String>>);
+
 #[tauri::command]
 fn render_frame(
     scene: Scene,
@@ -118,13 +122,27 @@ fn render_frame(
     width: u32,
     height: u32,
     images: Vec<media::ImageAsset>,
+    checked: tauri::State<'_, PreviewImages>,
 ) -> Result<String, String> {
     scene.validate()?;
     model::validate_canvas(width, height)?;
     if !time_ms.is_finite() {
         return Err("Invalid frame dimensions or time.".into());
     }
-    media::validate_images(&images)?;
+    let mut checked = checked.0.lock().map_err(|e| e.to_string())?;
+    let fresh: Vec<String> = images
+        .iter()
+        .filter(|i| !checked.contains(&i.data))
+        .map(|i| i.data.clone())
+        .collect();
+    if !fresh.is_empty() {
+        media::validate_images(&images)?;
+        checked.extend(fresh);
+        // Twice the per-project media budget, so switching projects cannot grow it unbounded.
+        while checked.iter().map(String::len).sum::<usize>() > 24_000_000 {
+            checked.remove(0);
+        }
+    }
     Ok(render::svg(&scene, time_ms, width, height, &images))
 }
 
@@ -340,6 +358,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Jobs::default())
         .manage(ModelDiscovery::default())
+        .manage(PreviewImages::default())
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             demo,

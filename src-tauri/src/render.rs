@@ -133,11 +133,12 @@ pub fn svg(
                     e.font_size,
                     e.font_weight
                 );
+                // Absolute y keeps blank lines: an empty tspan has no glyph to carry dy.
                 for (i, line) in e.text.lines().enumerate() {
                     let _ = write!(
                         s,
-                        r#"<tspan x="0" dy="{}">{}</tspan>"#,
-                        if i == 0 { 0.0 } else { e.font_size * 1.2 },
+                        r#"<tspan x="0" y="{}">{}</tspan>"#,
+                        i as f64 * e.font_size * 1.2,
                         escape(line)
                     );
                 }
@@ -191,6 +192,10 @@ mod tests {
         let xml = svg(&p.scenes[0].scene, 1000.0, 1280, 720, &p.images);
         assert!(!xml.contains("<script>"));
         assert!(xml.contains("&lt;script&gt;"));
+        p.scenes[0].scene.elements[0].text = "top\n\nbottom".into();
+        p.scenes[0].scene.elements[0].font_size = 10.0;
+        let xml = svg(&p.scenes[0].scene, 1000.0, 1280, 720, &p.images);
+        assert!(xml.contains(r#"<tspan x="0" y="24">bottom</tspan>"#));
         let pixels = raster(&xml, 320, 180, &options(), true).unwrap();
         assert_eq!(pixels.data().len(), 320 * 180 * 4);
     }

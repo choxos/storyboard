@@ -90,7 +90,7 @@ export function svg(
                     .split("\n")
                     .map(
                       (line, i) =>
-                        `<tspan x="0" dy="${i ? e.font_size * 1.2 : 0}">${escape(line)}</tspan>`,
+                        `<tspan x="0" y="${i * e.font_size * 1.2}">${escape(line)}</tspan>`,
                     )
                     .join("")}</text>`;
       return `<g data-element="${escape(e.id)}" transform="translate(${e.x} ${e.y}) rotate(${e.rotation}) scale(${e.scale_x} ${e.scale_y})" opacity="${e.opacity}" fill="${escape(e.fill)}" stroke="${escape(e.stroke)}" stroke-width="${e.stroke_width}">${shape}</g>`;

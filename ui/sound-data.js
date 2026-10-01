@@ -49,7 +49,8 @@ export function readSound(data) {
     view,
     channels,
     frames,
-    duration_ms: Math.round((frames / rate) * 1000),
+    // Integer rounding matches the native validator exactly.
+    duration_ms: Math.floor((frames + 12) / 24),
   };
 }
 

@@ -52,7 +52,8 @@ export async function exportVideo(
     fadeOut: GainNode | undefined,
     recorder: MediaRecorder | undefined;
   let destination: MediaStreamAudioDestinationNode | undefined,
-    stopSounds: (() => void) | undefined;
+    stopSounds: (() => void) | undefined,
+    started = false;
   const visible = () => {
     if (document.hidden)
       throw new Error(
@@ -62,9 +63,12 @@ export async function exportVideo(
   };
   try {
     if (audio || project.scenes.some((d) => d.scene.sounds?.length)) {
-      const buffer = audio ? await decodeAudio(audio) : null;
-      signal.throwIfAborted();
       audioContext = new AudioContext();
+      // Decode at the output rate; the 22050 Hz analysis rate would muffle the export.
+      const buffer = audio
+        ? await decodeAudio(audio, audioContext.sampleRate)
+        : null;
+      signal.throwIfAborted();
       await audioContext.resume();
       destination = audioContext.createMediaStreamDestination();
       if (buffer) {
@@ -137,6 +141,7 @@ export async function exportVideo(
         fadeOut.gain.linearRampToValueAtTime(0, start + end);
       }
       source.start(start, (project.audio.start_ms || 0) / 1000);
+      started = true;
     }
     const start = performance.now();
     try {
@@ -181,7 +186,8 @@ export async function exportVideo(
     );
   } finally {
     if (recorder && recorder.state !== "inactive") recorder.stop();
-    source?.stop();
+    // stop() throws on a source that never started, hiding the real error.
+    if (started) source?.stop();
     stopSounds?.();
     stream.getTracks().forEach((track) => track.stop());
     await audioContext?.close();

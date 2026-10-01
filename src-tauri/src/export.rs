@@ -137,12 +137,20 @@ pub fn mp4(
         terminate(&mut child);
         return Err(e);
     }
-    let status = match child
-        .wait_timeout(Duration::from_secs(60))
-        .map_err(|e| e.to_string())?
-    {
-        Some(s) => s,
-        None => {
+    // Large canvases can take minutes to flush the encoder; stay cancelable meanwhile.
+    let finishing = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .wait_timeout(Duration::from_millis(200))
+            .map_err(|e| e.to_string())?
+        {
+            break status;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            terminate(&mut child);
+            return Err("Export canceled.".into());
+        }
+        if finishing.elapsed() > Duration::from_secs(900) {
             terminate(&mut child);
             return Err("Encoder did not finish.".into());
         }

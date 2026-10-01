@@ -96,10 +96,13 @@ export function analyzeSamples(
     confidence: total ? Math.min(1, bestScore / total) : 0,
   };
 }
-export async function decodeAudio(blob: Blob): Promise<AudioBuffer> {
+export async function decodeAudio(
+  blob: Blob,
+  sampleRate = 22050,
+): Promise<AudioBuffer> {
   if (blob.size > 100000000)
     throw new Error("Audio imports are limited to 100 MB in the browser.");
-  const context = new AudioContext({ sampleRate: 22050 });
+  const context = new AudioContext({ sampleRate });
   try {
     const buffer = await context.decodeAudioData(await blob.arrayBuffer());
     if (buffer.duration < 0.5 || buffer.duration > 600)

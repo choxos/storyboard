@@ -18,11 +18,16 @@ import {
 
 const api = window.__TAURI__ || window.storyboardWeb;
 const browser = !!api?.browser;
+// Frame renders receive only the images their scene uses, not every embedded image.
+const sceneImages = (scene) =>
+  (s.project?.images || []).filter((image) =>
+    scene?.elements.some((e) => e.kind === "image" && e.image_id === image.id),
+  );
 const invoke = (name, args = {}) =>
   api.core.invoke(
     name,
     ["render_frame", "export_frame"].includes(name)
-      ? { images: s.project?.images || [], ...args }
+      ? { images: sceneImages(args.scene), ...args }
       : args,
   );
 const $ = (selector) => document.querySelector(selector);
@@ -319,7 +324,7 @@ function layerTools() {
   if (element) {
     $('[data-action="edit-selected"]').insertAdjacentHTML(
       "beforebegin",
-      `${element.kind === "text" ? '<button data-action="edit-text">Edit text</button>' : ""}<select id="align-layer" aria-label="Align selected layer"><option value="">Align to canvas</option><option value="horizontal">Center horizontally</option><option value="vertical">Center vertically</option><option value="center">Center both</option><option value="left">Left margin</option><option value="right">Right margin</option><option value="top">Top margin</option><option value="bottom">Bottom margin</option></select>`,
+      `${element.kind === "text" ? '<button data-action="edit-text">Edit text</button>' : ""}<select id="align-layer" aria-label="Align selected layer"><option value="">Align to canvas</option><option value="horizontal">Center horizontally</option><option value="vertical">Center vertically</option><option value="center">Center both</option><option value="left">Left margin</option><option value="right">Right margin</option><option value="top">Top margin</option><option value="bottom">Bottom margin</option></select><button data-action="duplicate-layer" title="Duplicate layer (Command+D)">Duplicate</button><button class="danger" data-action="delete-layer" title="Delete layer (Delete)">Delete</button>`,
     );
     $("#align-layer").disabled = s.busy;
     $("#align-layer").onchange = (event) =>
@@ -425,7 +430,7 @@ function openImages() {
     version = s.revision;
   const d = modal(
     "Images & logos",
-    `<p>Import PNG, JPEG, or WebP. Images are embedded in your project and fit within 2048 px. Select an image below to add an editable layer.</p><div class="image-library">${(project.images || []).map((image) => `<button data-image-id="${esc(image.id)}"><img src="${esc(image.data)}" alt=""><span>${esc(image.name)}</span><small>${image.width} × ${image.height}</small></button>`).join("") || "<p>No images yet. Import a photo or logo to start.</p>"}</div><p id="image-error" role="alert"></p>`,
+    `<p>Import PNG, JPEG, or WebP. Images are embedded in your project and fit within 2048 px; large photos shrink further to stay under 4 MB. Select an image below to add an editable layer.</p><div class="image-library">${(project.images || []).map((image) => `<button data-image-id="${esc(image.id)}"><img src="${esc(image.data)}" alt=""><span>${esc(image.name)}</span><small>${image.width} × ${image.height}</small></button>`).join("") || "<p>No images yet. Import a photo or logo to start.</p>"}</div><p id="image-error" role="alert"></p>`,
     '<button id="import-image" class="primary">Import image</button>',
     true,
   );
@@ -574,6 +579,60 @@ function moveSelected(dx, dy) {
     revision(doc(), "Before moving a layer");
     moveElement(element, dx, dy);
   });
+}
+function insertLayer(copy, label, after = null) {
+  return commit(() => {
+    revision(doc(), label);
+    const elements = doc().scene.elements;
+    const index = elements.findIndex((e) => e.id === after);
+    elements.splice(index < 0 ? elements.length : index + 1, 0, copy);
+    s.layer = copy.id;
+    s.layerScene = doc().scene.id;
+  });
+}
+function duplicateSelected() {
+  const element = selectedElement();
+  if (!element) return;
+  const copy = clone(element);
+  copy.id = uid();
+  moveElement(copy, 24, 24);
+  return insertLayer(copy, "Before duplicating a layer", element.id);
+}
+function deleteSelected() {
+  const element = selectedElement();
+  if (!element) return;
+  return commit(() => {
+    revision(doc(), "Before deleting a layer");
+    doc().scene.elements = doc().scene.elements.filter(
+      (e) => e.id !== element.id,
+    );
+    s.layer = null;
+  });
+}
+function copySelected() {
+  const element = selectedElement();
+  if (!element) return;
+  s.clipboard = { element: clone(element), sceneId: doc().scene.id };
+  toast("Layer copied. Select any scene and paste it.");
+}
+function pasteLayer() {
+  if (!s.clipboard) return;
+  const copy = clone(s.clipboard.element);
+  copy.id = uid();
+  // Repeated pastes into the source scene cascade instead of stacking.
+  if (s.clipboard.sceneId === doc().scene.id) {
+    moveElement(copy, 24, 24);
+    s.clipboard.element = clone(copy);
+  }
+  // Keys past a shorter scene's end are dropped; the base value holds instead.
+  const end = doc().scene.duration_ms;
+  copy.tracks = copy.tracks
+    .map((t) => ({
+      ...t,
+      keyframes: t.keyframes.filter((k) => k.time_ms <= end),
+    }))
+    .filter((t) => t.keyframes.length);
+  return insertLayer(copy, "Before pasting a layer");
 }
 function filmstrip() {
   $("#filmstrip").innerHTML =
@@ -1223,10 +1282,8 @@ async function send() {
       throw new Error(
         "Project changed during generation. Result was not applied.",
       );
-    s.drafts[draftKey] = "";
-    if ($("#prompt")?.dataset.draftKey === draftKey) $("#prompt").value = "";
     s.busy = false;
-    await commit(() => {
+    const applied = await commit(() => {
       if (scope === "scene") {
         const d = s.project.scenes[index];
         revision(d, `${provider}: ${prompt.slice(0, 70)}`);
@@ -1254,6 +1311,14 @@ async function send() {
       }
       s.time = 0;
     });
+    // commit already reported why the reply could not be applied; keep the prompt.
+    if (!applied) {
+      if ($("#prompt")?.dataset.draftKey === draftKey)
+        $("#prompt").value = prompt;
+      return;
+    }
+    s.drafts[draftKey] = "";
+    if ($("#prompt")?.dataset.draftKey === draftKey) $("#prompt").value = "";
     toast("New revision ready. Play it, refine it, or undo.");
   } catch (e) {
     toast(String(e), true);
@@ -1663,6 +1728,8 @@ function openProjectSettings(focusCanvas = false) {
       s.dirty = false;
       s.undo = [];
       s.redo = [];
+      s.layer = null;
+      s.revision++;
       setAudio();
       persist();
       refresh();
@@ -1723,7 +1790,7 @@ function audioGrid() {
       sections = $("#sections")
         .value.split(",")
         .filter((v) => v.trim())
-        .map(Number)
+        .map((v) => Math.round(Number(v)))
         .sort((a, b) => a - b);
     if (
       await commit(() => {
@@ -1901,11 +1968,13 @@ function click(e) {
     redo: () => history(true),
     "edit-selected": () => openInspector(s.layer),
     "edit-text": () => editText(),
+    "duplicate-layer": duplicateSelected,
+    "delete-layer": deleteSelected,
     "clear-selection": () => selectLayer(null),
     shortcuts: () =>
       modal(
         "Keyboard shortcuts",
-        `<dl class="shortcut-list"><dt>Space</dt><dd>Play or pause</dd><dt>Left / Right</dt><dd>Step one frame when no layer is selected</dd><dt>Arrow keys</dt><dd>Move selected layer by 1 pixel</dd><dt>Shift + Arrow keys</dt><dd>Move selected layer by 10 pixels</dd><dt>Shift + Drag</dt><dd>Move along one axis</dd><dt>Escape</dt><dd>Cancel a drag, deselect, or exit presentation</dd><dt>Command / Ctrl + Z</dt><dd>Undo</dd><dt>Command / Ctrl + Shift + Z</dt><dd>Redo</dd><dt>Command / Ctrl + S</dt><dd>Save project</dd><dt>Command / Ctrl + O</dt><dd>Open project</dd><dt>Command / Ctrl + Enter</dt><dd>${browser ? "Prepare assistant prompt" : "Send prompt"}</dd><dt>Option / Alt + Left / Right</dt><dd>Reorder selected scene</dd></dl><p>Dragging, nudging, and alignment shift the layer's entire position animation. Double-click text to edit its words; use Edit layer for keyframes. Align uses the visible layer bounds at the playhead, with 5% canvas margins. Use the Layer selector to reach overlapping or transparent layers.</p>`,
+        `<dl class="shortcut-list"><dt>Space</dt><dd>Play or pause</dd><dt>Left / Right</dt><dd>Step one frame when no layer is selected</dd><dt>Arrow keys</dt><dd>Move selected layer by 1 pixel</dd><dt>Shift + Arrow keys</dt><dd>Move selected layer by 10 pixels</dd><dt>Shift + Drag</dt><dd>Move along one axis</dd><dt>Delete / Backspace</dt><dd>Delete selected layer</dd><dt>Command / Ctrl + D</dt><dd>Duplicate selected layer</dd><dt>Command / Ctrl + C, then V</dt><dd>Copy selected layer and paste it into the current scene</dd><dt>Escape</dt><dd>Cancel a drag, deselect, or exit presentation</dd><dt>Command / Ctrl + Z</dt><dd>Undo</dd><dt>Command / Ctrl + Shift + Z</dt><dd>Redo</dd><dt>Command / Ctrl + S</dt><dd>Save project</dd><dt>Command / Ctrl + O</dt><dd>Open project</dd><dt>Command / Ctrl + Enter</dt><dd>${browser ? "Prepare assistant prompt" : "Send prompt"}</dd><dt>Option / Alt + Left / Right</dt><dd>Reorder selected scene</dd></dl><p>Dragging, nudging, and alignment shift the layer's entire position animation. Double-click text to edit its words; use Edit layer for keyframes. Align uses the visible layer bounds at the playhead, with 5% canvas margins. Use the Layer selector to reach overlapping or transparent layers.</p>`,
       ),
     versions,
     "project-settings": openProjectSettings,
@@ -2057,7 +2126,7 @@ function openInspector(elementId) {
         .map(([id, name]) => `<option value="${id}">${name}</option>`)
         .join(
           "",
-        )}</select></label><button id="apply-preset">Apply preset</button></div><p>Presets use up to 600 ms and replace only their affected tracks. Base values set the final position, scale, and opacity. Other tracks remain unchanged.</p>`,
+        )}</select></label><button id="apply-preset">Apply preset</button></div><p>Presets use up to 600 ms at the scene start, or at its end for Fade out. They replace keyframes only inside that window, so an entrance and Fade out combine. Base values set the final position, scale, and opacity.</p>`,
     );
     if (el.kind === "text")
       $("#layer-form").insertAdjacentHTML(
@@ -2283,6 +2352,21 @@ function keys(e) {
     e.preventDefault();
     selectLayer(null);
     return;
+  }
+  if (!s.presenting && !e.altKey && !e.shiftKey) {
+    const key = e.key.toLowerCase(),
+      layer = selectedElement();
+    let action = null;
+    if (!cmd && layer && (key === "delete" || key === "backspace"))
+      action = deleteSelected;
+    else if (cmd && layer && key === "d") action = duplicateSelected;
+    else if (cmd && layer && key === "c") action = copySelected;
+    else if (cmd && s.clipboard && key === "v") action = pasteLayer;
+    if (action) {
+      e.preventDefault();
+      action();
+      return;
+    }
   }
   if (
     selectedElement() &&

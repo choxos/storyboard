@@ -9,7 +9,7 @@ import {
 } from "./model";
 import { svg, checkSeams, frameImage, validateImageData } from "./render";
 import { analyzeAudio } from "./audio";
-import { stored, storeFile, download, pickFile } from "./files";
+import { stored, storeFile, pruneFiles, download, pickFile } from "./files";
 import { exportVideo, videoFormat } from "./export";
 import { assistant } from "./assistant";
 
@@ -64,6 +64,11 @@ async function invoke(
         project = saved;
         recovered = true;
       }
+      // Undo history ends with the page, so only recovery can still reference older soundtracks.
+      await pruneFiles(
+        "browser-audio:",
+        new Set([project.audio?.path]),
+      ).catch(() => {});
     } catch (error) {
       warning = `Browser recovery unavailable: ${error}. Download projects to keep a copy.`;
     }

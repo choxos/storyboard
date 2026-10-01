@@ -95,14 +95,20 @@ export async function importImage(file) {
     await image.decode();
     if (!image.width || !image.height || image.width * image.height > 33554432)
       throw new Error("Choose an image with at most 32 million pixels.");
-    const scale = Math.min(1, 2048 / image.width, 2048 / image.height);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.width * scale));
-    canvas.height = Math.max(1, Math.round(image.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Image conversion is unavailable.");
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL("image/png");
+    let scale = Math.min(1, 2048 / image.width, 2048 / image.height),
+      canvas,
+      data;
+    // Photos often exceed the 4 MB PNG limit at 2048 px; shrink until they fit.
+    do {
+      canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Image conversion is unavailable.");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      data = canvas.toDataURL("image/png");
+      scale *= 0.8;
+    } while (data.length > 5600000 && canvas.width * canvas.height > 4096);
     pngSize(data);
     return {
       id: crypto.randomUUID(),

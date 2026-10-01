@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { parseProject, validateProject } from "../web/model";
-import { readSound, soundPresets, synthSound } from "../ui/sound-data.js";
+import {
+  makeSound,
+  readSound,
+  soundPresets,
+  synthSound,
+} from "../ui/sound-data.js";
 import { cuePlacements, scheduleSounds } from "../ui/sound-playback.js";
 
 test("portable effects validate, follow scene order, and schedule trimmed pitched tails", () => {
@@ -11,6 +16,8 @@ test("portable effects validate, follow scene order, and schedule trimmed pitche
   project.sounds = Object.keys(soundPresets).map(synthSound);
   for (const sound of project.sounds)
     expect(readSound(sound.data).duration_ms).toBe(sound.duration_ms);
+  // 12012 frames is 500.5 ms; the native validator rounds it up to 501.
+  expect(makeSound("half", [new Float32Array(12012)]).duration_ms).toBe(501);
   const sound = project.sounds.find((s) => s.name === "Riser")!;
   project.scenes[0].scene.sounds = [
     {

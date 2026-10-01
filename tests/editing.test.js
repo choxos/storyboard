@@ -33,6 +33,27 @@ test("movement shifts the complete motion path and leaves other tracks intact", 
   expect(element).toEqual(before);
 });
 
+test("an entrance preset and fade out combine on one opacity track", () => {
+  const s = scene();
+  s.duration_ms = 4000;
+  s.elements = [s.elements[0]];
+  const e = s.elements[0];
+  e.tracks = [];
+  applyMotionPreset(e, "slide-from-left", 4000, 50);
+  applyMotionPreset(e, "fade-out", 4000, 50);
+  applyMotionPreset(e, "fade-in", 4000, 50);
+  validateScene(s);
+  const opacity = e.tracks.find((t) => t.property === "opacity");
+  expect([0, 600, 3400, 4000].map((t) => sample(opacity, t))).toEqual([
+    0,
+    e.opacity,
+    e.opacity,
+    0,
+  ]);
+  const x = e.tracks.find((t) => t.property === "x");
+  expect([sample(x, 0), sample(x, 600)]).toEqual([e.x - 50, e.x]);
+});
+
 test("all motion presets stay valid on short and long scenes and preserve unrelated tracks", () => {
   for (const duration of [100, 600, 4000, 120000])
     for (const preset of Object.keys(motionPresets)) {
